@@ -36,6 +36,10 @@ class RecallWorker:
         self.config = load_config()
         database_started = time.perf_counter()
         self.database = Database(self.config.database_path)
+        self.database.recover_running_jobs(
+            utcnow_iso(),
+            "Recall restarted before the previous indexing job finished.",
+        )
         database_ready_ms = round((time.perf_counter() - database_started) * 1000)
         self.ocr_engine = create_ocr_engine()
         embedding_started = time.perf_counter()

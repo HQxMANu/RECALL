@@ -6,7 +6,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 
 from recall_worker.core.config import SUPPORTED_EXTENSIONS
 
@@ -82,6 +82,12 @@ class IndexingPipeline:
         content_hash = file_sha256(image_path)
         duplicate = self.database.get_image_by_hash(content_hash)
         timestamp = utcnow_iso()
+        width = None
+        height = None
+        thumbnail_path: Path | None = None
+        ocr_text = ""
+        warning_code = None
+        warning_message = None
 
         try:
             with Image.open(image_path) as image:
@@ -93,7 +99,12 @@ class IndexingPipeline:
                 if vector is None:
                     vector = self.embedder.embed_image(image_path, f"{image_path.name} {ocr_text}")
             else:
-                ocr_text = self.ocr_engine.extract_text(image_path)
+                try:
+                    ocr_text = self.ocr_engine.extract_text(image_path)
+                except Exception as error:  # noqa: BLE001
+                    warning_code = type(error).__name__
+                    warning_message = str(error) or type(error).__name__
+                    ocr_text = ""
                 vector = self.embedder.embed_image(image_path, f"{image_path.name} {ocr_text}")
 
             payload = {
@@ -108,16 +119,16 @@ class IndexingPipeline:
                 "width": width,
                 "height": height,
                 "ocr_text": ocr_text,
-                "thumbnail_path": str(thumbnail_path),
+                "thumbnail_path": str(thumbnail_path) if thumbnail_path is not None else None,
                 "last_indexed_at": timestamp,
                 "index_status": "ready",
-                "error_code": None,
-                "error_message": None,
+                "error_code": warning_code,
+                "error_message": warning_message,
             }
             image_id = self.database.upsert_image(payload)
             self.database.upsert_embedding(image_id, self.embedder.model_name, ensure_float32(vector), timestamp)
             self.vector_index.upsert(image_id, ensure_float32(vector))
-        except (OSError, UnidentifiedImageError) as error:
+        except Exception as error:  # noqa: BLE001
             payload = {
                 "folder_id": folder_id,
                 "path": str(image_path),
@@ -127,14 +138,14 @@ class IndexingPipeline:
                 "created_at_fs": datetime.fromtimestamp(stat.st_ctime, timezone.utc).isoformat(),
                 "modified_at_fs": datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat(),
                 "file_size_bytes": stat.st_size,
-                "width": None,
-                "height": None,
+                "width": width,
+                "height": height,
                 "ocr_text": None,
-                "thumbnail_path": None,
+                "thumbnail_path": str(thumbnail_path) if thumbnail_path is not None else None,
                 "last_indexed_at": timestamp,
                 "index_status": "error",
                 "error_code": type(error).__name__,
-                "error_message": str(error),
+                "error_message": str(error) or type(error).__name__,
             }
             self.database.upsert_image(payload)
 

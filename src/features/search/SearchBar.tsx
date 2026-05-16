@@ -2,6 +2,7 @@ type SearchBarProps = {
   query: string
   disabled: boolean
   helperText: string
+  showSuggestions?: boolean
   onQueryChange: (value: string) => void
 }
 
@@ -12,7 +13,13 @@ const SUGGESTIONS = [
   'beach sunset photo',
 ]
 
-export function SearchBar({ query, disabled, helperText, onQueryChange }: SearchBarProps) {
+export function SearchBar({
+  query,
+  disabled,
+  helperText,
+  showSuggestions = true,
+  onQueryChange,
+}: SearchBarProps) {
   return (
     <div className="search-stack">
       <input
@@ -28,20 +35,22 @@ export function SearchBar({ query, disabled, helperText, onQueryChange }: Search
         aria-label="Search indexed images"
         autoFocus={!disabled}
       />
-      <div className="query-suggestions" aria-label="Example searches">
-        {SUGGESTIONS.map((suggestion) => (
-          <button
-            key={suggestion}
-            type="button"
-            className="query-chip"
-            disabled={disabled}
-            onClick={() => onQueryChange(suggestion)}
-          >
-            {suggestion}
-          </button>
-        ))}
-      </div>
-      <p className="results-subtitle">{helperText}</p>
+      {showSuggestions ? (
+        <div className="query-suggestions" aria-label="Example searches">
+          {SUGGESTIONS.map((suggestion) => (
+            <button
+              key={suggestion}
+              type="button"
+              className="query-chip"
+              disabled={disabled}
+              onClick={() => onQueryChange(suggestion)}
+            >
+              {suggestion}
+            </button>
+          ))}
+        </div>
+      ) : null}
+      {helperText ? <p className="search-helper">{helperText}</p> : null}
     </div>
   )
 }

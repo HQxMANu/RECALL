@@ -15,7 +15,7 @@ export function StatusPill({ health, status }: StatusPillProps) {
       ? `${status.itemsProcessed.toLocaleString()} / ${status.itemsTotal.toLocaleString()} indexed`
       : status.state === 'error'
         ? status.lastError || 'Indexing error'
-        : 'Core search ready'
+        : 'Local index ready'
 
   const state =
     health.coreSearchPhase !== 'ready'

@@ -14,13 +14,6 @@ function formatScore(score: number) {
   return `${Math.round(score * 100)}%`
 }
 
-function formatDate(isoDate: string) {
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(new Date(isoDate))
-}
-
 export function ResultsGrid({
   coreSearchReady,
   isSearching,
@@ -44,7 +37,7 @@ export function ResultsGrid({
     return (
       <div className="results-empty">
         <div className="results-empty__panel">
-          <h2>{isSearching ? 'Searching your local index…' : 'No matches yet'}</h2>
+          <h2>{isSearching ? 'Searching your local index...' : 'No matches yet'}</h2>
           <p>
             {query
               ? 'Try a broader phrase, remove a folder filter, or finish indexing more files.'
@@ -64,6 +57,7 @@ export function ResultsGrid({
             <button
               type="button"
               className="result-card"
+              aria-label={`Open preview for ${result.filename}`}
               onClick={() => onPreview(result)}
             >
               <div className="result-card__thumb">
@@ -77,15 +71,6 @@ export function ResultsGrid({
                   <span className="score-chip">text {formatScore(result.textScore)}</span>
                 </div>
               </div>
-              <div>
-                <p className="result-card__title">{result.filename}</p>
-                <p className="result-card__meta">
-                  {result.folderName ?? 'Indexed folder'} • {formatDate(result.modifiedAt)}
-                </p>
-              </div>
-              <p className="result-card__snippet">
-                {result.ocrSnippet || 'No OCR snippet available.'}
-              </p>
             </button>
           </li>
         )

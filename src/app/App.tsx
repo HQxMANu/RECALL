@@ -1,90 +1,64 @@
-import { FolderSidebar } from '../features/folders/FolderSidebar'
+import { useState } from 'react'
+
+import { FoldersView } from '../features/folders/FoldersView'
 import { PreviewModal } from '../features/preview/PreviewModal'
-import { ResultsGrid } from '../features/results/ResultsGrid'
-import { SearchBar } from '../features/search/SearchBar'
-import { StatusPill } from '../features/status/StatusPill'
+import { SearchView } from '../features/search/SearchView'
 import { useRecallApp } from '../hooks/useRecallApp'
+import { LeftNavRail, type WorkspaceView } from './LeftNavRail'
+import { StatusPanel } from './StatusPanel'
+import { TopHeader, type SearchScope } from './TopHeader'
 
 export function RecallApp() {
   const app = useRecallApp()
+  const [view, setView] = useState<WorkspaceView>('search')
+  const [scope, setScope] = useState<SearchScope>('images')
+
+  const handleQueryChange = (value: string) => {
+    setView('search')
+    app.setQuery(value)
+  }
 
   return (
     <>
-      <div className="recall-shell">
-        <FolderSidebar
-          folders={app.folders}
-          activeFolderIds={app.activeFolderSet}
-          shellReady={app.shellReady}
-          status={app.status}
-          health={app.health}
-          onAddFolders={app.addFolders}
-          onRemoveFolder={app.removeFolder}
-          onToggleFolder={app.toggleFolder}
-          onClearFilters={app.clearFilters}
-        />
+      <div className="app-shell">
+        <div className="app-frame">
+          <LeftNavRail activeView={view} onChangeView={setView} />
 
-        <main className="main">
-          <section className="hero-panel">
-            <div className="topbar">
-              <SearchBar
+          <TopHeader
+            query={app.query}
+            disabled={!app.coreSearchReady}
+            helperText={app.searchDisabledReason}
+            scope={scope}
+            onQueryChange={handleQueryChange}
+            onScopeChange={setScope}
+            health={app.health}
+            status={app.status}
+          />
+
+          <main className="workspace" aria-live="polite">
+            {view === 'search' ? (
+              <SearchView
+                coreSearchReady={app.coreSearchReady}
+                isSearching={app.isSearching || app.isBootstrapping}
                 query={app.query}
-                disabled={!app.coreSearchReady}
-                helperText={app.searchDisabledReason}
-                onQueryChange={app.setQuery}
+                results={app.results}
+                errorMessage={app.errorMessage}
+                statusMessage={app.searchDisabledReason}
+                onPreview={app.previewResult}
               />
-              <div className="toolbar-meta">
-                <select
-                  className="sort-select"
-                  value={app.sort}
-                  disabled={!app.coreSearchReady}
-                  onChange={(event) =>
-                    app.setSort(event.target.value as 'relevance' | 'newest' | 'oldest')
-                  }
-                  aria-label="Sort search results"
-                >
-                  <option value="relevance">Sort: Relevance</option>
-                  <option value="newest">Sort: Newest</option>
-                  <option value="oldest">Sort: Oldest</option>
-                </select>
-                <StatusPill health={app.health} status={app.status} />
-              </div>
-            </div>
-          </section>
+            ) : (
+              <FoldersView
+                folders={app.folders}
+                activeFolderIds={app.activeFolderSet}
+                onAddFolders={app.addFolders}
+                onRemoveFolder={app.removeFolder}
+                onToggleFolder={app.toggleFolder}
+              />
+            )}
+          </main>
 
-          <section className="content-panel">
-            <div className="content-shell">
-              <header className="results-header">
-                <div className="results-title-block">
-                  <h1>Results</h1>
-                  <p className="results-subtitle">
-                    {app.coreSearchReady
-                      ? `${app.totalHits.toLocaleString()} matches in ${app.tookMs} ms${
-                          app.isSearching ? ' - refreshing...' : ''
-                        }`
-                      : app.searchDisabledReason}
-                  </p>
-                  {app.errorMessage && (
-                    <p className="results-subtitle">Issue: {app.errorMessage}</p>
-                  )}
-                </div>
-                <p className="results-subtitle">
-                  Hybrid ranking: OCR + CLIP semantic similarity + recency boost
-                </p>
-              </header>
-
-              <div className="results-scroll">
-                <ResultsGrid
-                  coreSearchReady={app.coreSearchReady}
-                  isSearching={app.isSearching || app.isBootstrapping}
-                  query={app.query}
-                  results={app.results}
-                  statusMessage={app.searchDisabledReason}
-                  onPreview={app.previewResult}
-                />
-              </div>
-            </div>
-          </section>
-        </main>
+          <StatusPanel shellReady={app.shellReady} status={app.status} health={app.health} />
+        </div>
       </div>
 
       <PreviewModal

@@ -1,7 +1,14 @@
 from pathlib import Path
 import unittest
+from unittest import mock
 
-from recall_worker.ocr.engine import PaddleOcrEngine, _extract_paddle_text_lines
+from recall_worker.ocr.engine import (
+    LazyOcrEngine,
+    PaddleOcrEngine,
+    TesseractOcrEngine,
+    _extract_paddle_text_lines,
+    _preferred_engine_types,
+)
 
 
 class FakePaddlePredictor:
@@ -49,6 +56,47 @@ class PaddleOcrEngineTests(unittest.TestCase):
         )
 
         self.assertEqual(lines, ["alpha", "beta"])
+
+    def test_lazy_engine_falls_back_to_tesseract_when_paddle_runtime_fails(self) -> None:
+        predictor = FakePaddlePredictor(None)
+
+        def crash(*args, **kwargs):
+            del args, kwargs
+            raise RuntimeError("predictor failed")
+
+        predictor.predict = crash
+        paddle_engine = object.__new__(PaddleOcrEngine)
+        paddle_engine._ocr = predictor
+
+        fallback_engine = mock.Mock()
+        fallback_engine.engine_name = "tesseract"
+        fallback_engine.degraded = False
+        fallback_engine.extract_text.return_value = "fallback text"
+
+        engine = LazyOcrEngine()
+        engine._engine = paddle_engine
+        engine.engine_name = paddle_engine.engine_name
+        engine.degraded = paddle_engine.degraded
+        engine._phase = "ready"
+
+        with mock.patch("recall_worker.ocr.engine.TesseractOcrEngine", return_value=fallback_engine):
+            text = engine.extract_text(Path("sample.png"))
+
+        self.assertEqual(text, "fallback text")
+        self.assertEqual(engine.engine_name, "tesseract")
+        self.assertTrue(engine.degraded)
+        self.assertEqual(engine.status()["phase"], "ready")
+        self.assertIn("PaddleOCR runtime inference failed", engine.status()["last_error"])
+
+    def test_windows_prefers_tesseract_by_default(self) -> None:
+        with (
+            mock.patch("recall_worker.ocr.engine.sys.platform", "win32"),
+            mock.patch.dict("os.environ", {}, clear=False),
+        ):
+            engines = _preferred_engine_types()
+
+        self.assertEqual(engines[0], TesseractOcrEngine)
+        self.assertEqual(engines[1], PaddleOcrEngine)
 
 
 if __name__ == "__main__":

@@ -355,6 +355,18 @@ class Database:
             self._connection.commit()
         return int(cursor.lastrowid)
 
+    def recover_running_jobs(self, finished_at: str, error_message: str) -> None:
+        with self._lock:
+            self._connection.execute(
+                """
+                UPDATE indexing_jobs
+                SET status = 'failed', finished_at = ?, error_message = COALESCE(error_message, ?)
+                WHERE status = 'running' AND finished_at IS NULL
+                """,
+                (finished_at, error_message),
+            )
+            self._connection.commit()
+
     def update_job_progress(self, job_id: int, items_total: int, items_processed: int) -> None:
         with self._lock:
             self._connection.execute(

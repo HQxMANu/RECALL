@@ -61,8 +61,7 @@ pub fn read_indexing_status(app_data_dir: &Path) -> anyhow::Result<IndexingStatu
     ORDER BY
       CASE status
         WHEN 'running' THEN 0
-        WHEN 'failed' THEN 1
-        ELSE 2
+        ELSE 1
       END,
       COALESCE(finished_at, started_at) DESC
     LIMIT 1

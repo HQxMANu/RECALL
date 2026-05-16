@@ -80,7 +80,17 @@ class LazyOcrEngine(OcrEngine):
         self._lock = threading.RLock()
 
     def extract_text(self, image_path: Path) -> str:
-        return self.ensure_ready().extract_text(image_path)
+        engine = self.ensure_ready()
+        try:
+            return engine.extract_text(image_path)
+        except Exception as error:
+            with self._lock:
+                self._last_error = f"{engine.engine_name} inference failed: {error}"
+
+            fallback = self._promote_runtime_fallback(error)
+            if fallback is not None:
+                return fallback.extract_text(image_path)
+            raise
 
     def ensure_ready(self) -> OcrEngine:
         if self._engine is not None:
@@ -107,6 +117,32 @@ class LazyOcrEngine(OcrEngine):
             )
             return self._engine
 
+    def _promote_runtime_fallback(self, error: Exception) -> OcrEngine | None:
+        with self._lock:
+            current_engine = self._engine
+            if not isinstance(current_engine, PaddleOcrEngine):
+                return None
+
+            try:
+                fallback_engine = TesseractOcrEngine()
+            except Exception:
+                return None
+
+            self._engine = fallback_engine
+            self.engine_name = fallback_engine.engine_name
+            self.degraded = True
+            self._phase = "ready"
+            self._last_error = (
+                "PaddleOCR runtime inference failed; falling back to Tesseract. "
+                f"Original error: {error}"
+            )
+            print(
+                "PaddleOCR runtime failed; switched OCR engine to tesseract.",
+                file=sys.stderr,
+                flush=True,
+            )
+            return fallback_engine
+
     def status(self) -> dict[str, Any]:
         with self._lock:
             return {
@@ -123,7 +159,7 @@ def create_ocr_engine() -> LazyOcrEngine:
 
 
 def _load_ocr_engine() -> OcrEngine:
-    for engine_type in (PaddleOcrEngine, TesseractOcrEngine):
+    for engine_type in _preferred_engine_types():
         try:
             engine = engine_type()
             if engine_type is PaddleOcrEngine and os.environ.get("RECALL_VALIDATE_OCR_ON_BOOT") == "1":
@@ -132,6 +168,19 @@ def _load_ocr_engine() -> OcrEngine:
         except Exception:
             continue
     return OcrEngine()
+
+
+def _preferred_engine_types() -> tuple[type[OcrEngine], ...]:
+    preferred = os.environ.get("RECALL_OCR_ENGINE", "").strip().lower()
+    if preferred == "paddleocr":
+        return (PaddleOcrEngine, TesseractOcrEngine)
+    if preferred == "tesseract":
+        return (TesseractOcrEngine, PaddleOcrEngine)
+
+    if sys.platform.startswith("win"):
+        return (TesseractOcrEngine, PaddleOcrEngine)
+
+    return (PaddleOcrEngine, TesseractOcrEngine)
 
 
 def _validate_paddle_engine(engine: PaddleOcrEngine) -> None:

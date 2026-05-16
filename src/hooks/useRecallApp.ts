@@ -23,7 +23,6 @@ import type {
   SearchRequest,
   SearchResponse,
   SearchResult,
-  SortMode,
 } from '../types/contracts'
 
 const SEARCH_LIMIT = 50
@@ -69,7 +68,6 @@ export function useRecallApp() {
   const [status, setStatus] = useState<IndexingStatus>(initialStatus)
   const [health, setHealth] = useState<AppHealth>(initialHealth)
   const [query, setQuery] = useState('')
-  const [sort, setSort] = useState<SortMode>('relevance')
   const [searchState, setSearchState] = useState<SearchResponse>({
     results: [],
     tookMs: 0,
@@ -91,6 +89,19 @@ export function useRecallApp() {
   const activeFolderSet = useMemo(
     () => new Set(selectedFolderIds),
     [selectedFolderIds],
+  )
+  const searchRefreshToken = useMemo(
+    () =>
+      JSON.stringify({
+        lastCompletedAt: status.lastCompletedAt,
+        activeJobId: status.activeJobId,
+        folders: folders.map((folder) => ({
+          id: folder.id,
+          imageCount: folder.imageCount,
+          lastIndexedAt: folder.lastIndexedAt,
+        })),
+      }),
+    [folders, status.activeJobId, status.lastCompletedAt],
   )
 
   const refreshShell = async () => {
@@ -172,14 +183,14 @@ export function useRecallApp() {
       void runSearch({
         query: deferredQuery.trim(),
         folderIds: selectedFolderIds,
-        sort,
+        sort: 'relevance',
         limit: SEARCH_LIMIT,
         offset: 0,
       })
     }, 150)
 
     return () => window.clearTimeout(timeoutId)
-  }, [coreSearchReady, deferredQuery, selectedFolderIds, sort])
+  }, [coreSearchReady, deferredQuery, searchRefreshToken, selectedFolderIds])
 
   const addFolders = async () => {
     await selectFolders()
@@ -215,8 +226,6 @@ export function useRecallApp() {
     searchDisabledReason,
     query,
     setQuery,
-    sort,
-    setSort,
     results: searchState.results,
     totalHits: searchState.totalHits,
     tookMs: searchState.tookMs,
