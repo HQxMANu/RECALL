@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "recall-worker"
+version = "0.1.0"
+description = "Local indexing and search worker for Recall"
+requires-python = ">=3.11"
+dependencies = [
+  "numpy>=2.1.0",
+  "Pillow>=10.4.0",
+]
+
+[project.optional-dependencies]
+ml = [
+  "faiss-cpu>=1.8.0",
+  "open-clip-torch>=2.26.1",
+  "torch>=2.5.0",
+  "paddleocr>=2.8.1",
+  "pytesseract>=0.3.13",
+]
+
+[project.scripts]
+recall-worker = "recall_worker.api.server:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
