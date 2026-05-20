@@ -1,10 +1,14 @@
 import {
+  useEffectEvent,
   startTransition,
   useDeferredValue,
   useEffect,
   useMemo,
+  useRef,
   useState,
 } from 'react'
+import { listen, type UnlistenFn } from '@tauri-apps/api/event'
+import { isTauri } from '@tauri-apps/api/core'
 
 import {
   copyImagePath,
@@ -78,6 +82,11 @@ export function useRecallApp() {
   const [isBootstrapping, setIsBootstrapping] = useState(true)
   const [isSearching, setIsSearching] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const shellRefreshInFlight = useRef(false)
+  const healthRefreshInFlight = useRef(false)
+  const latestSearchRequestId = useRef(0)
+  const activeSearchRequestId = useRef(0)
+  const mountedRef = useRef(true)
 
   const deferredQuery = useDeferredValue(query)
   const shellReady = !isBootstrapping
@@ -105,74 +114,165 @@ export function useRecallApp() {
   )
 
   const refreshShell = async () => {
+    if (shellRefreshInFlight.current) {
+      return
+    }
+    shellRefreshInFlight.current = true
     try {
       const [nextFolders, nextStatus] = await Promise.all([
         listIndexedFolders(),
         getIndexingStatus(),
       ])
 
-      startTransition(() => {
-        setFolders(nextFolders)
-        setStatus(nextStatus)
-        setErrorMessage(null)
-      })
+      if (mountedRef.current) {
+        startTransition(() => {
+          setFolders(nextFolders)
+          setStatus(nextStatus)
+          setErrorMessage(null)
+        })
+      }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to refresh app state.')
+      if (mountedRef.current) {
+        setErrorMessage(error instanceof Error ? error.message : 'Failed to refresh app state.')
+      }
     } finally {
-      setIsBootstrapping(false)
+      shellRefreshInFlight.current = false
+      if (mountedRef.current) {
+        setIsBootstrapping(false)
+      }
     }
   }
 
   const refreshHealth = async () => {
+    if (healthRefreshInFlight.current) {
+      return
+    }
+    healthRefreshInFlight.current = true
     try {
       const nextHealth = await getAppHealth()
-      startTransition(() => {
-        setHealth(nextHealth)
-        setErrorMessage(null)
-      })
+      if (mountedRef.current) {
+        startTransition(() => {
+          setHealth(nextHealth)
+          setErrorMessage(null)
+        })
+      }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Failed to refresh app health.')
+      if (mountedRef.current) {
+        setErrorMessage(error instanceof Error ? error.message : 'Failed to refresh app health.')
+      }
+    } finally {
+      healthRefreshInFlight.current = false
     }
   }
 
-  const runSearch = async (request: SearchRequest) => {
+  const runSearch = useEffectEvent(async (request: SearchRequest) => {
     if (!coreSearchReady) {
       return
     }
 
+    const requestId = latestSearchRequestId.current + 1
+    latestSearchRequestId.current = requestId
+    activeSearchRequestId.current = requestId
     setIsSearching(true)
     try {
       const response = await searchImages(request)
-      startTransition(() => {
-        setSearchState(response)
-        setErrorMessage(null)
-      })
+      if (mountedRef.current && requestId === latestSearchRequestId.current) {
+        startTransition(() => {
+          setSearchState(response)
+          setErrorMessage(null)
+        })
+      }
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : 'Search failed.')
+      if (mountedRef.current && requestId === latestSearchRequestId.current) {
+        setErrorMessage(error instanceof Error ? error.message : 'Search failed.')
+      }
     } finally {
-      setIsSearching(false)
+      if (mountedRef.current && requestId === activeSearchRequestId.current) {
+        setIsSearching(false)
+      }
     }
-  }
+  })
 
   useEffect(() => {
+    mountedRef.current = true
     queueMicrotask(() => {
       void refreshShell()
       void refreshHealth()
     })
-    const shellIntervalId = window.setInterval(() => {
+
+    let unlisteners: UnlistenFn[] = []
+    let cancelled = false
+
+    const registerListeners = async () => {
+      if (!isTauri()) {
+        return
+      }
+
+      try {
+        const nextUnlisteners = await Promise.all([
+          listen<IndexedFolder[]>('recall://folders-changed', (event) => {
+            if (!mountedRef.current) {
+              return
+            }
+            startTransition(() => {
+              setFolders(event.payload)
+              setErrorMessage(null)
+            })
+          }),
+          listen<IndexingStatus>('recall://indexing-status', (event) => {
+            if (!mountedRef.current) {
+              return
+            }
+            startTransition(() => {
+              setStatus(event.payload)
+              setErrorMessage(null)
+              setIsBootstrapping(false)
+            })
+          }),
+          listen<AppHealth>('recall://health', (event) => {
+            if (!mountedRef.current) {
+              return
+            }
+            startTransition(() => {
+              setHealth(event.payload)
+              setErrorMessage(null)
+            })
+          }),
+        ])
+        if (cancelled) {
+          for (const unlisten of nextUnlisteners) {
+            unlisten()
+          }
+          return
+        }
+        unlisteners = nextUnlisteners
+      } catch (error) {
+        if (!cancelled && mountedRef.current) {
+          setErrorMessage(
+            error instanceof Error
+              ? error.message
+              : 'Failed to subscribe to Recall status updates.',
+          )
+        }
+      }
+    }
+
+    void registerListeners()
+
+    const fallbackIntervalId = window.setInterval(() => {
       void refreshShell()
-    }, 2500)
-
-    return () => window.clearInterval(shellIntervalId)
-  }, [])
-
-  useEffect(() => {
-    const intervalId = window.setInterval(() => {
       void refreshHealth()
-    }, coreSearchReady ? 2500 : 700)
+    }, 15000)
 
-    return () => window.clearInterval(intervalId)
-  }, [coreSearchReady])
+    return () => {
+      cancelled = true
+      mountedRef.current = false
+      window.clearInterval(fallbackIntervalId)
+      for (const unlisten of unlisteners) {
+        unlisten()
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (!coreSearchReady) {

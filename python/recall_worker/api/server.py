@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 import json
-import queue
 import sys
 import threading
 import time
 import traceback
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,13 +47,25 @@ class RecallWorker:
         embedding_init_ms = round((time.perf_counter() - embedding_started) * 1000)
         vector_started = time.perf_counter()
         self.vector_index = create_vector_index(self.embedder.dimension, self.config.vector_index_path)
+        embeddings_state = self.database.get_embeddings_state()
+        rebuild_batch_count = 0
         if self.vector_index.engine_name == "faiss":
-            embedding_ids = self.database.list_embedding_ids()
-            bootstrapped = self.vector_index.bootstrap(ids=embedding_ids)
+            bootstrapped = self.vector_index.bootstrap(metadata=embeddings_state)
             if not bootstrapped:
-                self.vector_index.bootstrap(embeddings=self.database.list_all_embeddings())
+                rebuild_batch_count = self._rebuild_vector_index_from_batches(embeddings_state)
         else:
-            self.vector_index.bootstrap(embeddings=self.database.list_all_embeddings())
+            bootstrapped = self.vector_index.bootstrap(metadata=embeddings_state)
+            if not bootstrapped:
+                rebuild_batch_count = self._rebuild_vector_index_from_batches(embeddings_state)
+        if getattr(self.vector_index, "bootstrap_mode", None) == "rebuilt":
+            print(
+                (
+                    "Rebuilt vector index from streamed embedding batches "
+                    f"({rebuild_batch_count} batches)."
+                ),
+                file=sys.stderr,
+                flush=True,
+            )
         vector_bootstrap_ms = round((time.perf_counter() - vector_started) * 1000)
         self.pipeline = IndexingPipeline(
             self.config,
@@ -70,7 +82,16 @@ class RecallWorker:
         )
         self.status = RuntimeStatus()
         self._status_lock = threading.RLock()
-        self._job_queue: queue.Queue[tuple[str, dict]] = queue.Queue()
+        self._health_lock = threading.RLock()
+        self._scheduler_condition = threading.Condition()
+        self._full_index_jobs: deque[dict] = deque()
+        self._pending_fs_events: dict[str, dict] = {}
+        self._shutdown_requested = False
+        self._scheduler_metrics = {
+            "mergedFsEvents": 0,
+            "coalescedFsEvents": 0,
+            "dispatchedFsEvents": 0,
+        }
         self._job_thread = threading.Thread(target=self._job_loop, daemon=True, name="recall-indexer")
         self._job_thread.start()
         self._startup_metrics = {
@@ -80,6 +101,7 @@ class RecallWorker:
             "coreSearchReadyMs": round((time.perf_counter() - startup_started) * 1000),
             "vectorBootstrapMode": getattr(self.vector_index, "bootstrap_mode", "unknown"),
         }
+        self._cached_health = self._compute_health_snapshot()
         print(
             (
                 "Core search ready in "
@@ -95,9 +117,9 @@ class RecallWorker:
         paths = params.get("paths") or []
         canonical_paths: list[str] = []
         for raw_path in paths:
-          path = Path(raw_path).expanduser()
-          if path.exists() and path.is_dir():
-            canonical_paths.append(str(path.resolve()))
+            path = Path(raw_path).expanduser()
+            if path.exists() and path.is_dir():
+                canonical_paths.append(str(path.resolve()))
         added, skipped = self.database.add_or_reactivate_folders(canonical_paths, utcnow_iso())
         folder_ids = [folder["id"] for folder in added]
         if folder_ids:
@@ -113,6 +135,8 @@ class RecallWorker:
         removed_ids = self.database.delete_folder(folder_id)
         for image_id in removed_ids:
             self.vector_index.remove(image_id)
+        if removed_ids:
+            self.vector_index.flush(self.database.get_embeddings_state())
         return {"removedImageIds": removed_ids}
 
     def process_fs_events(self, params: dict) -> dict:
@@ -136,13 +160,17 @@ class RecallWorker:
                 "activeJobType": self.status.active_job_type,
                 "itemsTotal": self.status.items_total,
                 "itemsProcessed": self.status.items_processed,
-                "queuedJobs": self._job_queue.qsize(),
+                "queuedJobs": self._queued_jobs_count(),
                 "lastCompletedAt": self.status.last_completed_at,
                 "lastError": self.status.last_error,
             }
 
     def get_health(self, params: dict | None = None) -> dict:
         del params
+        with self._health_lock:
+            return dict(self._cached_health)
+
+    def _compute_health_snapshot(self) -> dict:
         ocr_status = self.ocr_engine.status()
         semantic_search_ready = (
             not self.embedder.degraded
@@ -208,9 +236,15 @@ class RecallWorker:
             },
         }
 
+    def _refresh_health_snapshot(self) -> None:
+        with self._health_lock:
+            self._cached_health = self._compute_health_snapshot()
+
     def shutdown(self, params: dict | None = None) -> dict:
         del params
-        self._enqueue("shutdown", {})
+        with self._scheduler_condition:
+            self._shutdown_requested = True
+            self._scheduler_condition.notify_all()
         return {"shuttingDown": True}
 
     def dispatch(self, method: str, params: dict) -> object:
@@ -230,13 +264,77 @@ class RecallWorker:
         return handlers[method](params)
 
     def _enqueue(self, job_type: str, payload: dict) -> None:
-        self._job_queue.put((job_type, payload))
+        with self._scheduler_condition:
+            if job_type == "fs_events":
+                self._merge_fs_events_locked(payload.get("events") or [])
+            else:
+                self._full_index_jobs.append(payload)
+            self._scheduler_condition.notify()
+
+    def _queued_jobs_count(self) -> int:
+        with self._scheduler_condition:
+            return len(self._full_index_jobs) + (1 if self._pending_fs_events else 0)
+
+    def _merge_fs_events_locked(self, events: list[dict]) -> None:
+        for event in events:
+            canonical_path = self._canonical_event_path(event.get("path", ""))
+            if not canonical_path:
+                continue
+            kind = "delete" if event.get("kind") == "delete" else "modify"
+            existing = self._pending_fs_events.get(canonical_path)
+            if existing is not None:
+                self._scheduler_metrics["coalescedFsEvents"] += 1
+                if existing["kind"] == "delete":
+                    continue
+                if kind == "delete":
+                    self._pending_fs_events[canonical_path] = {"kind": "delete", "path": canonical_path}
+                continue
+            self._pending_fs_events[canonical_path] = {"kind": kind, "path": canonical_path}
+            self._scheduler_metrics["mergedFsEvents"] += 1
+
+    @staticmethod
+    def _canonical_event_path(path: str) -> str:
+        if not path:
+            return ""
+        candidate = Path(path).expanduser()
+        try:
+            normalized = candidate.resolve(strict=False)
+        except OSError:
+            normalized = candidate.absolute()
+        return str(normalized)
+
+    def _rebuild_vector_index_from_batches(self, embeddings_state: dict[str, int | str | None]) -> int:
+        batch_size = 512
+        batch_count = 0
+        self.vector_index.begin_rebuild()
+        try:
+            for batch in self.database.iter_embedding_batches(batch_size):
+                self.vector_index.add_batch(batch)
+                batch_count += 1
+            self.vector_index.finish_rebuild(embeddings_state)
+            return batch_count
+        except Exception:
+            self.vector_index.abort_rebuild()
+            raise
 
     def _job_loop(self) -> None:
         while True:
-            job_type, payload = self._job_queue.get()
-            if job_type == "shutdown":
-                return
+            with self._scheduler_condition:
+                while not self._shutdown_requested and not self._full_index_jobs and not self._pending_fs_events:
+                    self._scheduler_condition.wait()
+                if self._shutdown_requested:
+                    return
+                if self._full_index_jobs:
+                    job_type = "full_index"
+                    payload = self._full_index_jobs.popleft()
+                else:
+                    job_type = "fs_events"
+                    payload = {
+                        "events": list(self._pending_fs_events.values()),
+                        "triggerSource": "watcher",
+                    }
+                    self._pending_fs_events.clear()
+                    self._scheduler_metrics["dispatchedFsEvents"] += len(payload["events"])
 
             job_id = self.database.create_job(job_type, None, payload.get("triggerSource", "system"), utcnow_iso())
             with self._status_lock:
@@ -246,6 +344,7 @@ class RecallWorker:
                 self.status.items_total = 0
                 self.status.items_processed = 0
                 self.status.last_error = None
+            self._refresh_health_snapshot()
 
             try:
                 if job_type == "full_index":
@@ -258,11 +357,23 @@ class RecallWorker:
                         if not folder_record:
                             continue
 
+                        last_progress_flush = 0.0
+                        last_progress_processed = 0
+
                         def progress(total: int, processed: int) -> None:
+                            nonlocal last_progress_flush, last_progress_processed
                             with self._status_lock:
                                 self.status.items_total = total
                                 self.status.items_processed = processed
-                            self.database.update_job_progress(job_id, total, processed)
+                            now = time.perf_counter()
+                            if (
+                                processed == total
+                                or processed - last_progress_processed >= 25
+                                or now - last_progress_flush >= 0.25
+                            ):
+                                self.database.update_job_progress(job_id, total, processed)
+                                last_progress_flush = now
+                                last_progress_processed = processed
 
                         self.pipeline.scan_folder(folder_record, progress)
                 elif job_type == "fs_events":
@@ -275,6 +386,7 @@ class RecallWorker:
                     self.status.active_job_id = None
                     self.status.active_job_type = None
                     self.status.last_completed_at = utcnow_iso()
+                self._refresh_health_snapshot()
             except Exception as error:  # noqa: BLE001
                 self.database.finish_job(job_id, utcnow_iso(), "failed", str(error))
                 with self._status_lock:
@@ -282,6 +394,7 @@ class RecallWorker:
                     self.status.active_job_id = None
                     self.status.active_job_type = None
                     self.status.last_error = str(error)
+                self._refresh_health_snapshot()
                 print(f"Worker job failed: {error}", file=sys.stderr, flush=True)
                 traceback.print_exc(file=sys.stderr)
 

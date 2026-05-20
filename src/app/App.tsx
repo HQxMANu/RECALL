@@ -8,10 +8,13 @@ import { LeftNavRail, type WorkspaceView } from './LeftNavRail'
 import { StatusPanel } from './StatusPanel'
 import { TopHeader, type SearchScope } from './TopHeader'
 
+export type ThumbnailSize = 'large' | 'medium' | 'small'
+
 export function RecallApp() {
   const app = useRecallApp()
   const [view, setView] = useState<WorkspaceView>('search')
   const [scope, setScope] = useState<SearchScope>('images')
+  const [thumbnailSize, setThumbnailSize] = useState<ThumbnailSize>('large')
 
   const handleQueryChange = (value: string) => {
     setView('search')
@@ -44,6 +47,8 @@ export function RecallApp() {
                 results={app.results}
                 errorMessage={app.errorMessage}
                 statusMessage={app.searchDisabledReason}
+                thumbnailSize={thumbnailSize}
+                onThumbnailSizeChange={setThumbnailSize}
                 onPreview={app.previewResult}
               />
             ) : (

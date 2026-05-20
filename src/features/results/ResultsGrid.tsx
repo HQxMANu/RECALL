@@ -1,4 +1,5 @@
 import { resolveImageSource } from '../../lib/tauri'
+import type { ThumbnailSize } from '../../app/App'
 import type { SearchResult } from '../../types/contracts'
 
 type ResultsGridProps = {
@@ -7,6 +8,7 @@ type ResultsGridProps = {
   query: string
   results: SearchResult[]
   statusMessage: string
+  thumbnailSize: ThumbnailSize
   onPreview: (result: SearchResult) => void
 }
 
@@ -20,6 +22,7 @@ export function ResultsGrid({
   query,
   results,
   statusMessage,
+  thumbnailSize,
   onPreview,
 }: ResultsGridProps) {
   if (!coreSearchReady) {
@@ -49,7 +52,7 @@ export function ResultsGrid({
   }
 
   return (
-    <ul className="result-grid">
+    <ul className="result-grid" data-size={thumbnailSize}>
       {results.map((result) => {
         const imageSource = resolveImageSource(result.thumbnailPath ?? result.path)
         return (

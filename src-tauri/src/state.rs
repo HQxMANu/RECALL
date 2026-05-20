@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::Context;
-use tauri::{AppHandle, Manager};
+use tauri::{AppHandle, Emitter, Manager};
 
 use crate::{
     local_data,
@@ -37,6 +37,46 @@ impl AppState {
 
     pub fn prewarm_worker(&self) {
         self.worker.start_in_background();
+    }
+
+    pub fn start_event_bridge(&self, app: AppHandle) {
+        let state = self.clone();
+        tauri::async_runtime::spawn(async move {
+            let mut last_health = None;
+            let mut last_status = None;
+            let mut last_folders = None;
+
+            loop {
+                let current_health = state.get_app_health().await.ok();
+                if let Some(health) = current_health.as_ref() {
+                    let serialized = serde_json::to_string(&health).ok();
+                    if serialized != last_health {
+                        let _ = app.emit("recall://health", &health);
+                        last_health = serialized;
+                    }
+                }
+
+                let current_status = state.read_indexing_status().ok();
+                if let Some(status) = current_status.as_ref() {
+                    let serialized = serde_json::to_string(&status).ok();
+                    if serialized != last_status {
+                        let _ = app.emit("recall://indexing-status", &status);
+                        last_status = serialized;
+                    }
+                }
+
+                if let Ok(folders) = state.list_indexed_folders() {
+                    let serialized = serde_json::to_string(&folders).ok();
+                    if serialized != last_folders {
+                        let _ = app.emit("recall://folders-changed", &folders);
+                        last_folders = serialized;
+                    }
+                }
+
+                let interval = event_bridge_interval(current_status.as_ref(), current_health.as_ref());
+                tokio::time::sleep(interval).await;
+            }
+        });
     }
 
     pub async fn sync_watched_folders(&self) -> Result<(), String> {
@@ -75,6 +115,20 @@ impl AppState {
                     .worker
                     .health_snapshot(self.app_data_dir.join("recall.db").exists()))
             })
+    }
+
+    pub async fn emit_current_snapshots(&self, app: &AppHandle) -> Result<(), String> {
+        let folders = self.list_indexed_folders()?;
+        let status = self.read_indexing_status()?;
+        let health = self.get_app_health().await?;
+
+        app.emit("recall://folders-changed", &folders)
+            .map_err(|error| error.to_string())?;
+        app.emit("recall://indexing-status", &status)
+            .map_err(|error| error.to_string())?;
+        app.emit("recall://health", &health)
+            .map_err(|error| error.to_string())?;
+        Ok(())
     }
 }
 
@@ -312,4 +366,80 @@ fn resolve_app_data_dir(app: &AppHandle) -> anyhow::Result<PathBuf> {
     app.path()
         .app_data_dir()
         .context("Unable to resolve the app data directory")
+}
+
+fn event_bridge_interval(
+    status: Option<&IndexingStatus>,
+    health: Option<&AppHealth>,
+) -> Duration {
+    if matches!(health, Some(health) if !health.core_search_ready) {
+        return Duration::from_millis(500);
+    }
+    if matches!(status, Some(status) if status.state == "indexing") {
+        return Duration::from_secs(2);
+    }
+    Duration::from_secs(15)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::event_bridge_interval;
+    use crate::models::{AppHealth, IndexingStatus};
+    use std::time::Duration;
+
+    fn ready_health() -> AppHealth {
+        AppHealth {
+            worker_ready: true,
+            database_ready: true,
+            text_search_ready: true,
+            semantic_search_ready: true,
+            core_search_ready: true,
+            core_search_phase: "ready".to_string(),
+            core_search_message: "ready".to_string(),
+            indexing_phase: "deferred".to_string(),
+            indexing_message: "deferred".to_string(),
+            vector_engine: "faiss".to_string(),
+            ocr_engine: "deferred".to_string(),
+            embedding_engine: "openclip".to_string(),
+            degraded: false,
+            message: "ready".to_string(),
+            startup_metrics: None,
+        }
+    }
+
+    fn indexing_status(state: &str) -> IndexingStatus {
+        IndexingStatus {
+            state: state.to_string(),
+            active_job_id: None,
+            active_job_type: None,
+            items_total: 0,
+            items_processed: 0,
+            queued_jobs: 0,
+            last_completed_at: None,
+            last_error: None,
+        }
+    }
+
+    #[test]
+    fn event_bridge_uses_fast_polling_while_warming() {
+        let mut health = ready_health();
+        health.core_search_ready = false;
+        assert_eq!(event_bridge_interval(None, Some(&health)), Duration::from_millis(500));
+    }
+
+    #[test]
+    fn event_bridge_uses_indexing_interval_while_busy() {
+        assert_eq!(
+            event_bridge_interval(Some(&indexing_status("indexing")), Some(&ready_health())),
+            Duration::from_secs(2),
+        );
+    }
+
+    #[test]
+    fn event_bridge_uses_idle_interval_when_ready() {
+        assert_eq!(
+            event_bridge_interval(Some(&indexing_status("idle")), Some(&ready_health())),
+            Duration::from_secs(15),
+        );
+    }
 }

@@ -64,18 +64,18 @@ class SearchService:
         text_rows = self.database.fts_search(fts_query, folder_ids, self.limit) if fts_query else []
         semantic_vector = self.embedder.embed_text(query)
         semantic_hits = self.vector_index.search(semantic_vector, self.limit)
+        semantic_ranked_ids = [image_id for image_id, _ in semantic_hits]
+
+        combined_ids = [int(row["id"]) for row in text_rows] + semantic_ranked_ids
+        metadata_rows = self.database.fetch_images_by_ids(combined_ids)
+        metadata_by_id = {image_id: dict(row) for image_id, row in metadata_rows.items()}
 
         if folder_ids:
-            metadata_for_filter = self.database.fetch_images_by_ids(image_id for image_id, _ in semantic_hits)
             semantic_hits = [
                 (image_id, score)
                 for image_id, score in semantic_hits
-                if image_id in metadata_for_filter and int(metadata_for_filter[image_id]["folder_id"]) in folder_ids
+                if image_id in metadata_by_id and int(metadata_by_id[image_id]["folder_id"]) in folder_ids
             ]
-
-        combined_ids = [int(row["id"]) for row in text_rows] + [image_id for image_id, _ in semantic_hits]
-        metadata_rows = self.database.fetch_images_by_ids(combined_ids)
-        metadata_by_id = {image_id: dict(row) for image_id, row in metadata_rows.items()}
 
         ranked_results, debug = blend_results(
             query=query,

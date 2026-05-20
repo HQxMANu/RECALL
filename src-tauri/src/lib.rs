@@ -27,6 +27,7 @@ pub fn run() {
             });
 
             state.prewarm_worker();
+            state.start_event_bridge(app.handle().clone());
             app.manage(state);
             if let Some(window) = app.get_webview_window("main") {
                 let _ = window.set_title("Recall");

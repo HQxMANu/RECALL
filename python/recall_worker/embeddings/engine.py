@@ -39,10 +39,19 @@ class BaseEmbedder:
         norm = np.linalg.norm(vector)
         return vector if norm == 0 else vector / norm
 
-    def embed_image(self, image_path: Path, hint_text: str = "") -> np.ndarray:
-        with Image.open(image_path) as image:
-            image = image.convert("RGB").resize((24, 24))
-            array = np.asarray(image, dtype=np.float32).reshape(-1, 3)
+    def embed_image(
+        self,
+        image_path: Path,
+        hint_text: str = "",
+        image: Image.Image | None = None,
+    ) -> np.ndarray:
+        source = image if image is not None else Image.open(image_path)
+        try:
+            prepared = source.convert("RGB").resize((24, 24))
+            array = np.asarray(prepared, dtype=np.float32).reshape(-1, 3)
+        finally:
+            if image is None:
+                source.close()
         color_summary = array.mean(axis=0)
         color_tokens = f"r{round(color_summary[0])} g{round(color_summary[1])} b{round(color_summary[2])}"
         return self.embed_text(f"{image_path.name} {hint_text} {color_tokens}")
@@ -85,10 +94,19 @@ class OpenClipEmbedder(BaseEmbedder):
             embedding = self._model.encode_text(tokens).cpu().numpy()[0].astype(np.float32)
         return self._normalize(embedding)
 
-    def embed_image(self, image_path: Path, hint_text: str = "") -> np.ndarray:
+    def embed_image(
+        self,
+        image_path: Path,
+        hint_text: str = "",
+        image: Image.Image | None = None,
+    ) -> np.ndarray:
         del hint_text
-        with Image.open(image_path) as image:
-            image_input = self._preprocess(image.convert("RGB")).unsqueeze(0)
+        source = image if image is not None else Image.open(image_path)
+        try:
+            image_input = self._preprocess(source.convert("RGB")).unsqueeze(0)
+        finally:
+            if image is None:
+                source.close()
         with self._torch.inference_mode():
             embedding = self._model.encode_image(image_input).cpu().numpy()[0].astype(np.float32)
         return self._normalize(embedding)

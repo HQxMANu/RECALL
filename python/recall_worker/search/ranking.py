@@ -42,15 +42,17 @@ def blend_results(
     results: list[dict] = []
     total_text = max(len(text_ids), 1)
     total_semantic = max(len(semantic_ids), 1)
+    text_positions = {image_id: position for position, image_id in enumerate(text_ids)}
+    semantic_positions = {image_id: position for position, image_id in enumerate(semantic_ids)}
 
     for image_id in combined_ids:
         metadata = metadata_by_id.get(image_id)
         if not metadata:
             continue
-        text_score = _rank_score(text_ids.index(image_id), total_text) if image_id in text_ids else 0.0
-        semantic_score = (
-            _rank_score(semantic_ids.index(image_id), total_semantic) if image_id in semantic_ids else 0.0
-        )
+        text_position = text_positions.get(image_id)
+        semantic_position = semantic_positions.get(image_id)
+        text_score = _rank_score(text_position, total_text) if text_position is not None else 0.0
+        semantic_score = _rank_score(semantic_position, total_semantic) if semantic_position is not None else 0.0
         freshness = recency_boost(metadata.get("modified_at_fs"))
         final_score = (
             semantic_weight * semantic_score

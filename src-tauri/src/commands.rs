@@ -19,7 +19,7 @@ use crate::{
 
 #[tauri::command]
 pub async fn select_folders(
-    _app: AppHandle,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<FolderSelectionResult, String> {
     let Some(paths) = FileDialog::new()
@@ -42,6 +42,7 @@ pub async fn select_folders(
     let worker = state.worker.client().await?;
     let result: FolderSelectionResult = worker.request("add_folders", payload).await?;
     state.sync_watched_folders().await?;
+    state.emit_current_snapshots(&app).await?;
     Ok(result)
 }
 
@@ -55,6 +56,7 @@ pub async fn list_indexed_folders(
 #[tauri::command]
 pub async fn remove_indexed_folder(
     folder_id: i64,
+    app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let worker = state.worker.client().await?;
@@ -62,6 +64,7 @@ pub async fn remove_indexed_folder(
         .request("remove_folder", json!({ "folderId": folder_id }))
         .await?;
     state.sync_watched_folders().await?;
+    state.emit_current_snapshots(&app).await?;
     Ok(())
 }
 

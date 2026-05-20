@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import json
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Iterable, Iterator, Sequence
 
 import numpy as np
 
@@ -113,6 +114,7 @@ class Database:
     def ensure_schema(self) -> None:
         with self._lock:
             self._connection.executescript(SCHEMA_SQL)
+            self._ensure_embeddings_revision_locked()
             self._connection.commit()
 
     def close(self) -> None:
@@ -209,6 +211,8 @@ class Database:
                 ).fetchall()
             ]
             self._connection.execute("DELETE FROM indexed_folders WHERE id = ?", (folder_id,))
+            if image_ids:
+                self._increment_embeddings_revision_locked()
             self._connection.commit()
         return image_ids
 
@@ -277,8 +281,21 @@ class Database:
         return int(image_id)
 
     def upsert_embedding(self, image_id: int, model_name: str, vector: np.ndarray, timestamp: str) -> None:
+        self.upsert_embeddings_batch(
+            [(image_id, model_name, vector, timestamp)],
+            bump_revision=True,
+        )
+
+    def upsert_embeddings_batch(
+        self,
+        records: Sequence[tuple[int, str, np.ndarray, str]],
+        *,
+        bump_revision: bool = True,
+    ) -> int:
+        if not records:
+            return self.get_embeddings_revision()
         with self._lock:
-            self._connection.execute(
+            self._connection.executemany(
                 """
                 INSERT INTO embeddings(image_id, model_name, vector_dim, vector_blob, updated_at)
                 VALUES (?, ?, ?, ?, ?)
@@ -288,15 +305,20 @@ class Database:
                   vector_blob = excluded.vector_blob,
                   updated_at = excluded.updated_at
                 """,
-                (
-                    image_id,
-                    model_name,
-                    int(vector.shape[0]),
-                    vector.astype(np.float32).tobytes(),
-                    timestamp,
-                ),
+                [
+                    (
+                        image_id,
+                        model_name,
+                        int(vector.shape[0]),
+                        vector.astype(np.float32).tobytes(),
+                        timestamp,
+                    )
+                    for image_id, model_name, vector, timestamp in records
+                ],
             )
+            revision = self._increment_embeddings_revision_locked() if bump_revision else self._read_embeddings_revision_locked()
             self._connection.commit()
+        return revision
 
     def list_all_embeddings(self) -> list[tuple[int, np.ndarray]]:
         with self._lock:
@@ -308,12 +330,58 @@ class Database:
             for row in rows
         ]
 
+    def iter_embedding_batches(
+        self,
+        batch_size: int,
+    ) -> Iterator[list[tuple[int, np.ndarray]]]:
+        if batch_size <= 0:
+            raise ValueError("batch_size must be positive")
+
+        with self._lock:
+            cursor = self._connection.execute(
+                """
+                SELECT image_id, vector_blob
+                FROM embeddings
+                ORDER BY image_id ASC
+                """
+            )
+            while True:
+                rows = cursor.fetchmany(batch_size)
+                if not rows:
+                    break
+                yield [
+                    (int(row["image_id"]), np.frombuffer(row["vector_blob"], dtype=np.float32))
+                    for row in rows
+                ]
+
     def list_embedding_ids(self) -> list[int]:
         with self._lock:
             rows = self._connection.execute(
                 "SELECT image_id FROM embeddings ORDER BY image_id"
             ).fetchall()
         return [int(row["image_id"]) for row in rows]
+
+    def get_embeddings_state(self) -> dict[str, int | str | None]:
+        with self._lock:
+            row = self._connection.execute(
+                """
+                SELECT COUNT(*) AS count,
+                       MIN(model_name) AS model_name,
+                       MAX(vector_dim) AS vector_dim
+                FROM embeddings
+                """
+            ).fetchone()
+            revision = self._read_embeddings_revision_locked()
+        return {
+            "revision": revision,
+            "count": int(row["count"] or 0),
+            "model_name": row["model_name"],
+            "vector_dim": int(row["vector_dim"]) if row["vector_dim"] is not None else None,
+        }
+
+    def get_embeddings_revision(self) -> int:
+        with self._lock:
+            return self._read_embeddings_revision_locked()
 
     def delete_image(self, path: str) -> int | None:
         with self._lock:
@@ -324,6 +392,7 @@ class Database:
             if not row:
                 return None
             self._connection.execute("DELETE FROM indexed_images WHERE path = ?", (path,))
+            self._increment_embeddings_revision_locked()
             self._connection.commit()
         return int(row["id"])
 
@@ -340,8 +409,52 @@ class Database:
                     f"DELETE FROM indexed_images WHERE id IN ({placeholders})",
                     stale_ids,
                 )
+                self._increment_embeddings_revision_locked()
                 self._connection.commit()
         return stale_ids
+
+    def upsert_images_batch(self, payloads: Sequence[dict]) -> dict[str, int]:
+        if not payloads:
+            return {}
+        with self._lock:
+            self._connection.executemany(
+                """
+                INSERT INTO indexed_images(
+                  folder_id, path, filename, extension, content_hash, created_at_fs, modified_at_fs,
+                  file_size_bytes, width, height, ocr_text, thumbnail_path,
+                  last_indexed_at, index_status, error_code, error_message
+                )
+                VALUES (
+                  :folder_id, :path, :filename, :extension, :content_hash, :created_at_fs, :modified_at_fs,
+                  :file_size_bytes, :width, :height, :ocr_text, :thumbnail_path,
+                  :last_indexed_at, :index_status, :error_code, :error_message
+                )
+                ON CONFLICT(path) DO UPDATE SET
+                  folder_id = excluded.folder_id,
+                  filename = excluded.filename,
+                  extension = excluded.extension,
+                  content_hash = excluded.content_hash,
+                  created_at_fs = excluded.created_at_fs,
+                  modified_at_fs = excluded.modified_at_fs,
+                  file_size_bytes = excluded.file_size_bytes,
+                  width = excluded.width,
+                  height = excluded.height,
+                  ocr_text = excluded.ocr_text,
+                  thumbnail_path = excluded.thumbnail_path,
+                  last_indexed_at = excluded.last_indexed_at,
+                  index_status = excluded.index_status,
+                  error_code = excluded.error_code,
+                  error_message = excluded.error_message
+                """,
+                payloads,
+            )
+            placeholders = ",".join("?" for _ in payloads)
+            rows = self._connection.execute(
+                f"SELECT id, path FROM indexed_images WHERE path IN ({placeholders})",
+                [payload["path"] for payload in payloads],
+            ).fetchall()
+            self._connection.commit()
+        return {row["path"]: int(row["id"]) for row in rows}
 
     def create_job(self, job_type: str, folder_id: int | None, trigger_source: str, started_at: str) -> int:
         with self._lock:
@@ -449,6 +562,45 @@ class Database:
                 ids,
             ).fetchall()
         return {int(row["id"]): row for row in rows}
+
+    def _ensure_embeddings_revision_locked(self) -> None:
+        self._connection.execute(
+            """
+            INSERT INTO app_settings(key, value_json, updated_at)
+            VALUES ('embeddings_revision', '0', 'system')
+            ON CONFLICT(key) DO NOTHING
+            """
+        )
+
+    def _read_embeddings_revision_locked(self) -> int:
+        self._ensure_embeddings_revision_locked()
+        row = self._connection.execute(
+            "SELECT value_json FROM app_settings WHERE key = 'embeddings_revision'"
+        ).fetchone()
+        if not row or row["value_json"] is None:
+            return 0
+        try:
+            value = json.loads(row["value_json"])
+        except json.JSONDecodeError:
+            try:
+                return int(row["value_json"])
+            except (TypeError, ValueError):
+                return 0
+        return int(value)
+
+    def _increment_embeddings_revision_locked(self) -> int:
+        revision = self._read_embeddings_revision_locked() + 1
+        self._connection.execute(
+            """
+            INSERT INTO app_settings(key, value_json, updated_at)
+            VALUES ('embeddings_revision', ?, 'system')
+            ON CONFLICT(key) DO UPDATE SET
+              value_json = excluded.value_json,
+              updated_at = excluded.updated_at
+            """,
+            (json.dumps(revision),),
+        )
+        return revision
 
     @staticmethod
     def _folder_row(row: sqlite3.Row) -> dict:
