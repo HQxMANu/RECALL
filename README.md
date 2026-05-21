@@ -1,39 +1,87 @@
 # Recall
 
-Recall is a Windows-first, local-only screenshot and image search app built with:
+Recall is a Windows-first, local-first desktop search app for screenshots and images. It lets you search your visual history in plain English using on-device OCR, embeddings, thumbnails, and hybrid ranking.
 
-- `Tauri`
-- `React + TypeScript`
-- `Python`
-- `SQLite + FTS5`
-- `FAISS` when installed, with a local NumPy fallback during development
+## Why Recall
 
-## What is implemented
+- Search screenshots like a private desktop copilot
+- Keep indexing, OCR, and semantic search on your machine
+- Blend text matches, OCR snippets, semantic similarity, and recency into one result list
+- Open results fast without uploading your image library anywhere
 
-- Desktop app shell with Spotlight-style search layout
-- Folder selection, folder filtering, and removal
-- Long-lived Python worker launched by the Tauri host
-- SQLite schema for folders, images, embeddings, jobs, and settings
-- OCR service abstraction with `PaddleOCR -> Tesseract -> null` fallback chain
-- Embedding service abstraction with `OpenCLIP -> hash fallback`
-- Vector search abstraction with `FAISS -> NumPy fallback`
-- Thumbnail generation
-- Incremental reprocessing from filesystem watcher events
-- Preview modal, open location, and copy path actions
-- Unit tests for ranking, database schema, and fallback embeddings
+## Product snapshot
 
-## Local setup
+- `Tauri` desktop shell
+- `React + TypeScript` UI
+- `Rust` host for native desktop integration
+- `Python` worker for indexing and search
+- `SQLite + FTS5` for metadata and text search
+- `FAISS` for vector search with local fallback paths
 
-1. Install Node.js, Python 3.11+, the Rust toolchain, and Visual Studio Build Tools with the C++ workload for Windows linking.
-2. Install frontend dependencies:
+## Screenshots
+
+### Desktop search experience
+
+![Recall desktop search](docs/images/recall-search.png)
+
+### Browser preview / mock data mode
+
+![Recall browser preview](docs/images/recall-browser-preview.png)
+
+### Readiness and indexing state
+
+![Recall status panel](docs/images/recall-status-panel.png)
+
+## What it does today
+
+- Index local folders of screenshots and images
+- Extract OCR text for searchable content
+- Generate embeddings for description-based image search
+- Store metadata, OCR text, embeddings, and thumbnails locally
+- Run hybrid ranking across text search and semantic search
+- Track indexing jobs and filesystem changes
+- Show search readiness, indexing progress, and local engine state in the UI
+- Support preview, open location, and copy path actions
+
+## Architecture
+
+Recall uses a local three-part architecture:
+
+1. `React + Tauri UI`
+2. `Rust desktop host`
+3. `Python indexing and search worker`
+
+More detail:
+
+- [Architecture notes](docs/architecture.md)
+- [SQLite schema](docs/schema.md)
+- [Ranking notes](docs/ranking.md)
+
+## Local-first design
+
+- No cloud inference in the runtime path
+- No telemetry pipeline in the current app runtime
+- Data stays in local app storage
+- OCR and indexing services are deferred until they are actually needed
+- Core search readiness is treated separately from shell readiness
+
+## Current status
+
+Recall is an active prototype with real local indexing and search, not just a UI mockup. The repository is Windows-first and currently optimized around desktop development on Windows.
+
+## Run locally
+
+### Requirements
+
+- Node.js
+- Python 3.11+
+- Rust toolchain
+- Visual Studio Build Tools with the C++ workload on Windows
+
+### Install
 
 ```powershell
 npm install
-```
-
-3. Create the optional Python environment for the worker:
-
-```powershell
 cd python
 python -m venv .venv
 .venv\Scripts\Activate.ps1
@@ -42,10 +90,16 @@ pip install ".[ml]"
 cd ..
 ```
 
-4. Run the desktop app:
+### Development
 
 ```powershell
 npm run dev:tauri
+```
+
+### Packaged build
+
+```powershell
+npm run build:tauri
 ```
 
 ## Validation
@@ -53,9 +107,12 @@ npm run dev:tauri
 - Frontend typecheck: `npm run typecheck`
 - Frontend lint: `npm run lint`
 - Python tests: `python -m unittest discover -s python/tests -t python`
-- Packaging smoke test: `.\scripts\smoke-test.ps1`
 
 ## Notes
 
-- The repository is intentionally local-first. There are no network calls in the runtime path.
-- If the optional ML packages are not installed, Recall still runs using local fallback engines and surfaces that degraded state in the UI.
+- This repository currently includes a Python ML stack, so local build artifacts can get large during development.
+- The packaged runtime is pruned for distribution, but the development workspace is still heavier than a typical CRUD desktop app.
+
+## License
+
+MIT
