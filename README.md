@@ -18,20 +18,6 @@ Recall is a Windows-first, local-first desktop search app for screenshots and im
 - `SQLite + FTS5` for metadata and text search
 - `FAISS` for vector search with local fallback paths
 
-## Screenshots
-
-### Desktop search experience
-
-![Recall desktop search](docs/images/recall-search.png)
-
-### Browser preview / mock data mode
-
-![Recall browser preview](docs/images/recall-browser-preview.png)
-
-### Readiness and indexing state
-
-![Recall status panel](docs/images/recall-status-panel.png)
-
 ## What it does today
 
 - Index local folders of screenshots and images
