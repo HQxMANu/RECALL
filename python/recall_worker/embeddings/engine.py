@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import math
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +20,7 @@ class EmbeddingHealth:
     dimension: int
 
 
-class BaseEmbedder:
+class HashFallbackEmbedder:
     engine_name = "hash-fallback"
     model_name = "hash-fallback-v1"
     degraded = True
@@ -39,6 +38,8 @@ class BaseEmbedder:
         norm = np.linalg.norm(vector)
         return vector if norm == 0 else vector / norm
 
+
+class BaseImageEmbedder(HashFallbackEmbedder):
     def embed_image(
         self,
         image_path: Path,
@@ -53,11 +54,13 @@ class BaseEmbedder:
             if image is None:
                 source.close()
         color_summary = array.mean(axis=0)
-        color_tokens = f"r{round(color_summary[0])} g{round(color_summary[1])} b{round(color_summary[2])}"
+        color_tokens = (
+            f"r{round(color_summary[0])} g{round(color_summary[1])} b{round(color_summary[2])}"
+        )
         return self.embed_text(f"{image_path.name} {hint_text} {color_tokens}")
 
 
-class OpenClipEmbedder(BaseEmbedder):
+class OpenClipImageEmbedder(BaseImageEmbedder):
     engine_name = "openclip"
     model_name = "ViT-B-32"
     degraded = False
@@ -72,11 +75,18 @@ class OpenClipEmbedder(BaseEmbedder):
 
         self._torch = torch
         self._device = "cpu"
-        checkpoint_path = hf_hub_download(
-            repo_id=self.repo_id,
-            filename=self.checkpoint_name,
-            local_files_only=True,
-        )
+        try:
+            checkpoint_path = hf_hub_download(
+                repo_id=self.repo_id,
+                filename=self.checkpoint_name,
+                local_files_only=True,
+            )
+        except Exception:
+            checkpoint_path = hf_hub_download(
+                repo_id=self.repo_id,
+                filename=self.checkpoint_name,
+                local_files_only=False,
+            )
         self._model, _, self._preprocess = open_clip.create_model_and_transforms(
             self.model_name,
             pretrained=checkpoint_path,
@@ -112,8 +122,64 @@ class OpenClipEmbedder(BaseEmbedder):
         return self._normalize(embedding)
 
 
-def create_embedder() -> BaseEmbedder:
+class BgeSmallTextEmbedder(HashFallbackEmbedder):
+    engine_name = "bge-small"
+    model_name = "BAAI/bge-small-en-v1.5"
+    degraded = False
+
+    def __init__(self) -> None:
+        import torch  # type: ignore
+        from transformers import AutoModel, AutoTokenizer  # type: ignore
+
+        self._torch = torch
+        try:
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name, local_files_only=True)
+            self._model = AutoModel.from_pretrained(self.model_name, local_files_only=True)
+        except Exception:
+            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name, local_files_only=False)
+            self._model = AutoModel.from_pretrained(self.model_name, local_files_only=False)
+        self._model.eval()
+        self.dimension = int(getattr(self._model.config, "hidden_size", 384))
+
+    def _normalize(self, vector: np.ndarray) -> np.ndarray:
+        norm = np.linalg.norm(vector)
+        return vector if norm == 0 else vector / norm
+
+    def embed_text(self, text: str) -> np.ndarray:
+        if not text.strip():
+            return np.zeros(self.dimension, dtype=np.float32)
+        encoded = self._tokenizer(
+            [text],
+            padding=True,
+            truncation=True,
+            max_length=512,
+            return_tensors="pt",
+        )
+        with self._torch.inference_mode():
+            outputs = self._model(**encoded)
+            token_embeddings = outputs.last_hidden_state
+            attention_mask = encoded["attention_mask"].unsqueeze(-1).expand(token_embeddings.size()).float()
+            pooled = (token_embeddings * attention_mask).sum(dim=1) / attention_mask.sum(dim=1).clamp(min=1e-9)
+            vector = pooled[0].cpu().numpy().astype(np.float32)
+        return self._normalize(vector)
+
+
+def create_embedder() -> BaseImageEmbedder:
+    return create_image_embedder()
+
+
+def create_image_embedder() -> BaseImageEmbedder:
     try:
-        return OpenClipEmbedder()
+        return OpenClipImageEmbedder()
     except Exception:
-        return BaseEmbedder()
+        return BaseImageEmbedder()
+
+
+def create_text_embedder() -> HashFallbackEmbedder:
+    try:
+        return BgeSmallTextEmbedder()
+    except Exception:
+        return HashFallbackEmbedder()
+
+
+BaseEmbedder = BaseImageEmbedder

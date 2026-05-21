@@ -5,17 +5,20 @@ import sys
 import threading
 import time
 import traceback
-from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 
 from recall_worker.core.config import load_config
 from recall_worker.db.database import Database
-from recall_worker.embeddings.engine import create_embedder
+from recall_worker.embeddings.engine import create_image_embedder, create_text_embedder
+from recall_worker.indexing.content import TextChunk, render_document_preview
 from recall_worker.indexing.pipeline import IndexingPipeline, utcnow_iso
 from recall_worker.ocr.engine import create_ocr_engine
 from recall_worker.search.service import SearchService
 from recall_worker.search.vector_index import create_vector_index
+from recall_worker.transcription.engine import create_transcription_engine
+
+create_embedder = create_image_embedder
 
 
 @dataclass(slots=True)
@@ -42,72 +45,127 @@ class RecallWorker:
         )
         database_ready_ms = round((time.perf_counter() - database_started) * 1000)
         self.ocr_engine = create_ocr_engine()
-        embedding_started = time.perf_counter()
-        self.embedder = create_embedder()
-        embedding_init_ms = round((time.perf_counter() - embedding_started) * 1000)
-        vector_started = time.perf_counter()
-        self.vector_index = create_vector_index(self.embedder.dimension, self.config.vector_index_path)
-        embeddings_state = self.database.get_embeddings_state()
-        rebuild_batch_count = 0
-        if self.vector_index.engine_name == "faiss":
-            bootstrapped = self.vector_index.bootstrap(metadata=embeddings_state)
-            if not bootstrapped:
-                rebuild_batch_count = self._rebuild_vector_index_from_batches(embeddings_state)
+        self.transcription_engine = create_transcription_engine()
+
+        image_embedding_started = time.perf_counter()
+        self.image_embedder = create_image_embedder()
+        image_embedding_init_ms = round((time.perf_counter() - image_embedding_started) * 1000)
+
+        text_embedding_started = time.perf_counter()
+        self.text_embedder = create_text_embedder()
+        text_embedding_init_ms = round((time.perf_counter() - text_embedding_started) * 1000)
+
+        image_vector_started = time.perf_counter()
+        image_vector_index_path = getattr(
+            self.config,
+            "image_vector_index_path",
+            getattr(self.config, "vector_index_path"),
+        )
+        self.image_vector_index = create_vector_index(
+            self.image_embedder.dimension,
+            image_vector_index_path,
+        )
+        image_embeddings_state = self.database.get_embeddings_state()
+        image_rebuild_batch_count = 0
+        if not self.image_vector_index.bootstrap(metadata=image_embeddings_state):
+            image_rebuild_batch_count = self._rebuild_image_vector_index_from_batches(image_embeddings_state)
+        image_vector_bootstrap_ms = round((time.perf_counter() - image_vector_started) * 1000)
+
+        text_vector_started = time.perf_counter()
+        text_vector_index_path = getattr(
+            self.config,
+            "text_vector_index_path",
+            Path(str(image_vector_index_path)).with_name("recall-text.faiss"),
+        )
+        self.text_vector_index = create_vector_index(
+            self.text_embedder.dimension,
+            text_vector_index_path,
+        )
+        text_rebuild_batch_count = 0
+        if hasattr(self.database, "get_text_embeddings_state"):
+            text_embeddings_state = self.database.get_text_embeddings_state()
+            if not self.text_vector_index.bootstrap(metadata=text_embeddings_state):
+                text_rebuild_batch_count = self._rebuild_text_vector_index_from_batches(text_embeddings_state)
         else:
-            bootstrapped = self.vector_index.bootstrap(metadata=embeddings_state)
-            if not bootstrapped:
-                rebuild_batch_count = self._rebuild_vector_index_from_batches(embeddings_state)
-        if getattr(self.vector_index, "bootstrap_mode", None) == "rebuilt":
+            text_embeddings_state = {
+                "revision": 0,
+                "count": 0,
+                "model_name": self.text_embedder.model_name,
+                "vector_dim": self.text_embedder.dimension,
+            }
+        text_vector_bootstrap_ms = round((time.perf_counter() - text_vector_started) * 1000)
+
+        if getattr(self.image_vector_index, "bootstrap_mode", None) == "rebuilt":
             print(
-                (
-                    "Rebuilt vector index from streamed embedding batches "
-                    f"({rebuild_batch_count} batches)."
-                ),
+                f"Rebuilt image vector index from streamed batches ({image_rebuild_batch_count} batches).",
                 file=sys.stderr,
                 flush=True,
             )
-        vector_bootstrap_ms = round((time.perf_counter() - vector_started) * 1000)
+        if getattr(self.text_vector_index, "bootstrap_mode", None) == "rebuilt":
+            print(
+                f"Rebuilt text vector index from streamed batches ({text_rebuild_batch_count} batches).",
+                file=sys.stderr,
+                flush=True,
+            )
+
         self.pipeline = IndexingPipeline(
             self.config,
             self.database,
             self.ocr_engine,
-            self.embedder,
-            self.vector_index,
+            self.image_embedder,
+            self.text_embedder,
+            self.image_vector_index,
+            self.text_vector_index,
+            self.transcription_engine,
         )
         self.search_service = SearchService(
             self.database,
-            self.embedder,
-            self.vector_index,
+            self.image_embedder,
+            self.text_embedder,
+            self.image_vector_index,
+            self.text_vector_index,
             self.config.search_limit,
         )
         self.status = RuntimeStatus()
         self._status_lock = threading.RLock()
         self._health_lock = threading.RLock()
         self._scheduler_condition = threading.Condition()
-        self._full_index_jobs: deque[dict] = deque()
+        self._full_index_jobs: list[dict] = []
+        self._active_full_index_folder_ids: set[int] = set()
         self._pending_fs_events: dict[str, dict] = {}
         self._shutdown_requested = False
         self._scheduler_metrics = {
             "mergedFsEvents": 0,
             "coalescedFsEvents": 0,
             "dispatchedFsEvents": 0,
+            "mergedFullIndexJobs": 0,
+            "dedupedFullIndexJobs": 0,
         }
         self._job_thread = threading.Thread(target=self._job_loop, daemon=True, name="recall-indexer")
         self._job_thread.start()
+        self._preview_backfill_thread = threading.Thread(
+            target=self._repair_missing_document_previews,
+            daemon=True,
+            name="recall-document-preview-backfill",
+        )
+        self._preview_backfill_thread.start()
         self._startup_metrics = {
             "databaseReadyMs": database_ready_ms,
-            "embeddingInitMs": embedding_init_ms,
-            "vectorBootstrapMs": vector_bootstrap_ms,
+            "embeddingInitMs": image_embedding_init_ms + text_embedding_init_ms,
+            "vectorBootstrapMs": image_vector_bootstrap_ms + text_vector_bootstrap_ms,
             "coreSearchReadyMs": round((time.perf_counter() - startup_started) * 1000),
-            "vectorBootstrapMode": getattr(self.vector_index, "bootstrap_mode", "unknown"),
+            "vectorBootstrapMode": (
+                f"images:{getattr(self.image_vector_index, 'bootstrap_mode', 'unknown')},"
+                f"text:{getattr(self.text_vector_index, 'bootstrap_mode', 'unknown')}"
+            ),
         }
         self._cached_health = self._compute_health_snapshot()
         print(
             (
                 "Core search ready in "
                 f"{self._startup_metrics['coreSearchReadyMs']} ms "
-                f"(embedder {embedding_init_ms} ms, vector {vector_bootstrap_ms} ms, "
-                f"mode {self._startup_metrics['vectorBootstrapMode']})"
+                f"(image embedder {image_embedding_init_ms} ms, text embedder {text_embedding_init_ms} ms, "
+                f"image vector {image_vector_bootstrap_ms} ms, text vector {text_vector_bootstrap_ms} ms)"
             ),
             file=sys.stderr,
             flush=True,
@@ -132,12 +190,16 @@ class RecallWorker:
 
     def remove_folder(self, params: dict) -> dict:
         folder_id = int(params["folderId"])
-        removed_ids = self.database.delete_folder(folder_id)
-        for image_id in removed_ids:
-            self.vector_index.remove(image_id)
-        if removed_ids:
-            self.vector_index.flush(self.database.get_embeddings_state())
-        return {"removedImageIds": removed_ids}
+        removed = self.database.delete_folder(folder_id)
+        for image_id in removed["imageIds"]:
+            self.image_vector_index.remove(image_id)
+        for chunk_id in removed["textChunkIds"]:
+            self.text_vector_index.remove(chunk_id)
+        if removed["imageIds"]:
+            self.image_vector_index.flush(self.database.get_embeddings_state())
+        if removed["textChunkIds"]:
+            self.text_vector_index.flush(self.database.get_text_embeddings_state())
+        return removed
 
     def process_fs_events(self, params: dict) -> dict:
         self._enqueue("fs_events", {"events": params.get("events") or [], "triggerSource": "watcher"})
@@ -150,6 +212,9 @@ class RecallWorker:
 
     def search(self, params: dict) -> dict:
         return self.search_service.search(params.get("request") or {})
+
+    def search_assets(self, params: dict) -> dict:
+        return self.search(params)
 
     def get_status(self, params: dict | None = None) -> dict:
         del params
@@ -172,66 +237,96 @@ class RecallWorker:
 
     def _compute_health_snapshot(self) -> dict:
         ocr_status = self.ocr_engine.status()
-        semantic_search_ready = (
-            not self.embedder.degraded
-            and self.embedder.engine_name == "openclip"
-            and self.vector_index.engine_name == "faiss"
+        transcription_status = self.transcription_engine.status()
+        image_vector_ready = self.image_vector_index.engine_name == "faiss"
+        text_vector_ready = self.text_vector_index.engine_name == "faiss"
+        image_semantic_ready = (
+            not self.image_embedder.degraded
+            and self.image_embedder.engine_name == "openclip"
+            and image_vector_ready
+        )
+        text_semantic_ready = (
+            not self.text_embedder.degraded
+            and text_vector_ready
         )
         text_search_ready = True
-        core_search_ready = text_search_ready and semantic_search_ready
+        image_scope_ready = image_semantic_ready
+        document_scope_ready = text_semantic_ready
+        voice_note_scope_ready = text_semantic_ready
+        semantic_search_ready = image_semantic_ready or text_semantic_ready
+        core_search_ready = image_scope_ready or document_scope_ready or voice_note_scope_ready
 
-        if core_search_ready:
+        if image_scope_ready and document_scope_ready and voice_note_scope_ready:
             core_search_phase = "ready"
-            core_search_message = "Semantic and text search are fully ready."
+            core_search_message = "Image, document, and voice-note search are fully ready."
+        elif image_scope_ready:
+            core_search_phase = "ready"
+            core_search_message = (
+                "Image search is ready. Document and voice-note semantic search will finish once "
+                "the local text models are available."
+            )
+        elif document_scope_ready or voice_note_scope_ready:
+            core_search_phase = "ready"
+            core_search_message = (
+                "Document and voice-note search are ready. Image semantic search will finish once "
+                "the local vision model is available."
+            )
         else:
             core_search_phase = "limited"
             core_search_message = (
-                "Recall could not finish its preferred semantic search startup. "
-                "Description-based search stays disabled until OpenCLIP and FAISS are available."
+                "Recall could not finish its preferred multi-asset semantic search startup. "
+                "Some scope filters may stay limited until local models are available."
             )
 
-        indexing_phase = str(ocr_status["phase"])
-        if indexing_phase == "deferred":
-            indexing_message = "OCR stays deferred until indexing starts."
-        elif indexing_phase == "warming":
-            indexing_message = "Recall is loading OCR for an indexing job."
-        elif indexing_phase == "ready":
-            indexing_message = f"OCR is ready with {ocr_status['engine_name']}."
-        else:
-            indexing_message = (
-                f"OCR is limited: {ocr_status['last_error'] or 'No OCR engine was available.'}"
-            )
+        indexing_phase = "deferred"
+        if ocr_status["phase"] == "warming" or transcription_status["phase"] == "warming":
+            indexing_phase = "warming"
+        elif ocr_status["phase"] == "ready" or transcription_status["phase"] == "ready":
+            indexing_phase = "ready"
+        elif ocr_status["phase"] == "limited" or transcription_status["phase"] == "limited":
+            indexing_phase = "limited"
 
+        indexing_message = (
+            "OCR and transcription stay deferred until indexing needs them."
+            if indexing_phase == "deferred"
+            else "Indexing services are available on demand."
+        )
         degraded = (
             not core_search_ready
             or bool(ocr_status["degraded"])
-            or self.ocr_engine.engine_name not in {"deferred", "paddleocr"}
-        )
-        message = (
-            "Core search is ready. OCR will load on demand for indexing."
-            if core_search_ready
-            else core_search_message
+            or bool(transcription_status["degraded"])
         )
         return {
             "workerReady": True,
             "databaseReady": True,
             "textSearchReady": text_search_ready,
             "semanticSearchReady": semantic_search_ready,
+            "imageSemanticReady": image_semantic_ready,
+            "textSemanticReady": text_semantic_ready,
+            "imageVectorReady": image_vector_ready,
+            "textVectorReady": text_vector_ready,
+            "imageScopeReady": image_scope_ready,
+            "documentScopeReady": document_scope_ready,
+            "voiceNoteScopeReady": voice_note_scope_ready,
             "coreSearchReady": core_search_ready,
             "coreSearchPhase": core_search_phase,
             "coreSearchMessage": core_search_message,
             "indexingPhase": indexing_phase,
             "indexingMessage": indexing_message,
-            "vectorEngine": self.vector_index.engine_name,
-            "ocrEngine": self.ocr_engine.engine_name,
-            "embeddingEngine": self.embedder.engine_name,
+            "vectorEngine": f"images:{self.image_vector_index.engine_name}, text:{self.text_vector_index.engine_name}",
+            "ocrEngine": ocr_status["engine_name"],
+            "embeddingEngine": f"images:{self.image_embedder.engine_name}, text:{self.text_embedder.engine_name}",
             "degraded": degraded,
-            "message": message,
+            "message": (
+                "Core multi-asset search is ready. OCR and transcription will load on demand."
+                if core_search_ready
+                else core_search_message
+            ),
             "startupMetrics": {
                 "coreSearchReadyMs": self._startup_metrics["coreSearchReadyMs"],
                 "embeddingInitMs": self._startup_metrics["embeddingInitMs"],
                 "vectorBootstrapMs": self._startup_metrics["vectorBootstrapMs"],
-                "ocrInitMs": ocr_status["last_init_ms"],
+                "ocrInitMs": ocr_status["last_init_ms"] or transcription_status["last_init_ms"],
                 "vectorBootstrapMode": self._startup_metrics["vectorBootstrapMode"],
             },
         }
@@ -239,6 +334,50 @@ class RecallWorker:
     def _refresh_health_snapshot(self) -> None:
         with self._health_lock:
             self._cached_health = self._compute_health_snapshot()
+
+    def _repair_missing_document_previews(self) -> None:
+        try:
+            while not self._shutdown_requested:
+                rows = self.database.list_documents_missing_previews(limit=25)
+                if not rows:
+                    return
+                for row in rows:
+                    if self._shutdown_requested:
+                        return
+                    document_path = Path(row["path"])
+                    if not document_path.exists():
+                        continue
+                    content_hash = row["content_hash"]
+                    preview_path = self.config.thumbnail_dir / f"{content_hash}-document.jpg"
+                    chunk_rows = self.database.fetch_asset_chunks(int(row["id"]))
+                    chunks = [
+                        TextChunk(
+                            text=row["chunk_text"],
+                            chunk_index=int(row["chunk_index"]),
+                            chunk_type=row["chunk_type"],
+                            page_number=row["page_number"],
+                            start_ms=row["start_ms"],
+                            end_ms=row["end_ms"],
+                        )
+                        for row in chunk_rows
+                    ]
+                    rendered_path = render_document_preview(
+                        document_path,
+                        preview_path,
+                        max_size=self.config.max_thumbnail_size * 2,
+                        chunks=chunks,
+                    )
+                    self.database.update_asset_preview(
+                        int(row["id"]),
+                        str(rendered_path),
+                        utcnow_iso(),
+                    )
+        except Exception as error:  # noqa: BLE001
+            print(
+                f"Document preview backfill failed: {error}",
+                file=sys.stderr,
+                flush=True,
+            )
 
     def shutdown(self, params: dict | None = None) -> dict:
         del params
@@ -255,6 +394,7 @@ class RecallWorker:
             "process_fs_events": self.process_fs_events,
             "rebuild_index": self.rebuild_index,
             "search": self.search,
+            "search_assets": self.search_assets,
             "get_status": self.get_status,
             "get_health": self.get_health,
             "shutdown": self.shutdown,
@@ -268,7 +408,7 @@ class RecallWorker:
             if job_type == "fs_events":
                 self._merge_fs_events_locked(payload.get("events") or [])
             else:
-                self._full_index_jobs.append(payload)
+                self._merge_full_index_locked(payload)
             self._scheduler_condition.notify()
 
     def _queued_jobs_count(self) -> int:
@@ -292,6 +432,43 @@ class RecallWorker:
             self._pending_fs_events[canonical_path] = {"kind": kind, "path": canonical_path}
             self._scheduler_metrics["mergedFsEvents"] += 1
 
+    def _merge_full_index_locked(self, payload: dict) -> None:
+        normalized_folder_ids = self._normalize_folder_ids(payload.get("folderIds") or [])
+        if not normalized_folder_ids:
+            self._scheduler_metrics["dedupedFullIndexJobs"] += 1
+            return
+
+        remaining_folder_ids = [
+            folder_id
+            for folder_id in normalized_folder_ids
+            if folder_id not in self._active_full_index_folder_ids
+        ]
+        if not remaining_folder_ids:
+            self._scheduler_metrics["dedupedFullIndexJobs"] += 1
+            return
+
+        if not self._full_index_jobs:
+            queued_payload = dict(payload)
+            queued_payload["folderIds"] = remaining_folder_ids
+            self._full_index_jobs.append(queued_payload)
+            return
+
+        pending_payload = self._full_index_jobs[0]
+        pending_folder_ids = set(self._normalize_folder_ids(pending_payload.get("folderIds") or []))
+        new_folder_ids = [folder_id for folder_id in remaining_folder_ids if folder_id not in pending_folder_ids]
+        if not new_folder_ids:
+            self._scheduler_metrics["dedupedFullIndexJobs"] += 1
+            return
+
+        pending_payload["folderIds"] = sorted((*pending_folder_ids, *new_folder_ids))
+        pending_payload["triggerSource"] = payload.get("triggerSource", pending_payload.get("triggerSource", "system"))
+        self._scheduler_metrics["mergedFullIndexJobs"] += 1
+
+    @staticmethod
+    def _normalize_folder_ids(folder_ids: list[int] | list[str]) -> list[int]:
+        normalized = sorted({int(folder_id) for folder_id in folder_ids})
+        return normalized
+
     @staticmethod
     def _canonical_event_path(path: str) -> str:
         if not path:
@@ -303,18 +480,37 @@ class RecallWorker:
             normalized = candidate.absolute()
         return str(normalized)
 
-    def _rebuild_vector_index_from_batches(self, embeddings_state: dict[str, int | str | None]) -> int:
+    def _rebuild_image_vector_index_from_batches(self, embeddings_state: dict[str, int | str | None]) -> int:
         batch_size = 512
         batch_count = 0
-        self.vector_index.begin_rebuild()
+        self.image_vector_index.begin_rebuild()
         try:
             for batch in self.database.iter_embedding_batches(batch_size):
-                self.vector_index.add_batch(batch)
+                self.image_vector_index.add_batch(batch)
                 batch_count += 1
-            self.vector_index.finish_rebuild(embeddings_state)
+            self.image_vector_index.finish_rebuild(embeddings_state)
             return batch_count
         except Exception:
-            self.vector_index.abort_rebuild()
+            self.image_vector_index.abort_rebuild()
+            raise
+
+    def _rebuild_text_vector_index_from_batches(self, embeddings_state: dict[str, int | str | None]) -> int:
+        batch_size = 512
+        batch_count = 0
+        self.text_vector_index.begin_rebuild()
+        try:
+            iterator = (
+                self.database.iter_text_embedding_batches(batch_size)
+                if hasattr(self.database, "iter_text_embedding_batches")
+                else self.database.iter_embedding_batches(batch_size)
+            )
+            for batch in iterator:
+                self.text_vector_index.add_batch(batch)
+                batch_count += 1
+            self.text_vector_index.finish_rebuild(embeddings_state)
+            return batch_count
+        except Exception:
+            self.text_vector_index.abort_rebuild()
             raise
 
     def _job_loop(self) -> None:
@@ -326,7 +522,10 @@ class RecallWorker:
                     return
                 if self._full_index_jobs:
                     job_type = "full_index"
-                    payload = self._full_index_jobs.popleft()
+                    payload = self._full_index_jobs.pop(0)
+                    self._active_full_index_folder_ids = set(
+                        self._normalize_folder_ids(payload.get("folderIds") or [])
+                    )
                 else:
                     job_type = "fs_events"
                     payload = {
@@ -349,9 +548,7 @@ class RecallWorker:
             try:
                 if job_type == "full_index":
                     folder_ids = payload.get("folderIds") or []
-                    folders = {
-                        int(folder["id"]): folder for folder in self.database.get_active_folder_records()
-                    }
+                    folders = {int(folder["id"]): folder for folder in self.database.get_active_folder_records()}
                     for folder_id in folder_ids:
                         folder_record = folders.get(int(folder_id))
                         if not folder_record:
@@ -397,6 +594,10 @@ class RecallWorker:
                 self._refresh_health_snapshot()
                 print(f"Worker job failed: {error}", file=sys.stderr, flush=True)
                 traceback.print_exc(file=sys.stderr)
+            finally:
+                if job_type == "full_index":
+                    with self._scheduler_condition:
+                        self._active_full_index_folder_ids.clear()
 
 
 def main() -> None:

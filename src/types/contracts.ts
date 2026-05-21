@@ -5,12 +5,16 @@ export type IndexedFolder = {
   path: string
   displayName: string
   isActive: boolean
+  itemCount: number
   imageCount: number
+  documentCount: number
+  voiceNoteCount: number
   lastIndexedAt?: string | null
 }
 
 export type SearchRequest = {
   query: string
+  scope: 'images' | 'documents' | 'voice-notes'
   folderIds?: number[]
   sort: SortMode
   limit: number
@@ -18,13 +22,16 @@ export type SearchRequest = {
 }
 
 export type SearchResult = {
-  imageId: number
+  assetId: number
+  assetType: 'image' | 'document' | 'voice-note'
   path: string
   filename: string
   thumbnailPath?: string | null
+  previewPath?: string | null
   modifiedAt: string
   createdAt?: string | null
   ocrSnippet?: string | null
+  snippet?: string | null
   semanticScore: number
   textScore: number
   finalScore: number
@@ -32,6 +39,10 @@ export type SearchResult = {
   folderName?: string | null
   width?: number | null
   height?: number | null
+  pageNumber?: number | null
+  startMs?: number | null
+  endMs?: number | null
+  durationMs?: number | null
 }
 
 export type SearchResponse = {
@@ -57,6 +68,13 @@ export type AppHealth = {
   databaseReady: boolean
   textSearchReady: boolean
   semanticSearchReady: boolean
+  imageSemanticReady: boolean
+  textSemanticReady: boolean
+  imageVectorReady: boolean
+  textVectorReady: boolean
+  imageScopeReady: boolean
+  documentScopeReady: boolean
+  voiceNoteScopeReady: boolean
   coreSearchReady: boolean
   coreSearchPhase: 'warming' | 'ready' | 'limited' | 'error'
   coreSearchMessage: string

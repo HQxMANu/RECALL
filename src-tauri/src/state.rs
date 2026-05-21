@@ -2,7 +2,7 @@ use std::{
     fs,
     path::PathBuf,
     sync::{Arc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::Context;
@@ -42,21 +42,39 @@ impl AppState {
     pub fn start_event_bridge(&self, app: AppHandle) {
         let state = self.clone();
         tauri::async_runtime::spawn(async move {
+            let database_exists = state.app_data_dir.join("recall.db").exists();
+            let mut current_health = state.worker.health_snapshot(database_exists);
             let mut last_health = None;
             let mut last_status = None;
             let mut last_folders = None;
+            let mut last_health_refresh_at = None;
 
             loop {
-                let current_health = state.get_app_health().await.ok();
-                if let Some(health) = current_health.as_ref() {
-                    let serialized = serde_json::to_string(&health).ok();
-                    if serialized != last_health {
-                        let _ = app.emit("recall://health", &health);
-                        last_health = serialized;
+                let current_status = state.read_indexing_status().ok();
+
+                let should_refresh_health = last_health_refresh_at
+                    .map(|last_refresh_at: Instant| {
+                        last_refresh_at.elapsed()
+                            >= worker_health_refresh_interval(
+                                current_status.as_ref(),
+                                Some(&current_health),
+                            )
+                    })
+                    .unwrap_or(true);
+
+                if should_refresh_health {
+                    if let Ok(next_health) = state.get_app_health().await {
+                        current_health = next_health;
                     }
+                    last_health_refresh_at = Some(Instant::now());
                 }
 
-                let current_status = state.read_indexing_status().ok();
+                let serialized = serde_json::to_string(&current_health).ok();
+                if serialized != last_health {
+                    let _ = app.emit("recall://health", &current_health);
+                    last_health = serialized;
+                }
+
                 if let Some(status) = current_status.as_ref() {
                     let serialized = serde_json::to_string(&status).ok();
                     if serialized != last_status {
@@ -73,7 +91,8 @@ impl AppState {
                     }
                 }
 
-                let interval = event_bridge_interval(current_status.as_ref(), current_health.as_ref());
+                let interval =
+                    event_bridge_interval(current_status.as_ref(), Some(&current_health));
                 tokio::time::sleep(interval).await;
             }
         });
@@ -93,8 +112,8 @@ impl AppState {
         local_data::read_indexing_status(&self.app_data_dir).map_err(|error| error.to_string())
     }
 
-    pub fn search_recent_images(&self, request: &SearchRequest) -> Result<SearchResponse, String> {
-        local_data::search_recent_images(&self.app_data_dir, request)
+    pub fn search_recent_assets(&self, request: &SearchRequest) -> Result<SearchResponse, String> {
+        local_data::search_recent_assets(&self.app_data_dir, request)
             .map_err(|error| error.to_string())
     }
 
@@ -226,6 +245,13 @@ impl WorkerManager {
                 database_ready,
                 text_search_ready: true,
                 semantic_search_ready: false,
+                image_semantic_ready: false,
+                text_semantic_ready: false,
+                image_vector_ready: false,
+                text_vector_ready: false,
+                image_scope_ready: false,
+                document_scope_ready: false,
+                voice_note_scope_ready: false,
                 core_search_ready: false,
                 core_search_phase: "warming".to_string(),
                 core_search_message: "Recall is verifying semantic and text search startup."
@@ -244,6 +270,13 @@ impl WorkerManager {
                 database_ready,
                 text_search_ready: false,
                 semantic_search_ready: false,
+                image_semantic_ready: false,
+                text_semantic_ready: false,
+                image_vector_ready: false,
+                text_vector_ready: false,
+                image_scope_ready: false,
+                document_scope_ready: false,
+                voice_note_scope_ready: false,
                 core_search_ready: false,
                 core_search_phase: "error".to_string(),
                 core_search_message: format!("Core search failed to start: {error}"),
@@ -261,6 +294,13 @@ impl WorkerManager {
                 database_ready,
                 text_search_ready: false,
                 semantic_search_ready: false,
+                image_semantic_ready: false,
+                text_semantic_ready: false,
+                image_vector_ready: false,
+                text_vector_ready: false,
+                image_scope_ready: false,
+                document_scope_ready: false,
+                voice_note_scope_ready: false,
                 core_search_ready: false,
                 core_search_phase: "warming".to_string(),
                 core_search_message:
@@ -295,7 +335,7 @@ impl WorkerManager {
 
         let manager = self.clone();
         tauri::async_runtime::spawn(async move {
-            match tokio::time::timeout(Duration::from_secs(30), client.ping()).await {
+            match tokio::time::timeout(Duration::from_secs(180), client.ping()).await {
                 Ok(Ok(())) => {
                     if let Ok(mut state) = manager.inner.state.lock() {
                         state.phase = WorkerPhase::Ready;
@@ -381,9 +421,22 @@ fn event_bridge_interval(
     Duration::from_secs(15)
 }
 
+fn worker_health_refresh_interval(
+    status: Option<&IndexingStatus>,
+    health: Option<&AppHealth>,
+) -> Duration {
+    if matches!(health, Some(health) if !health.core_search_ready) {
+        return Duration::from_millis(500);
+    }
+    if matches!(status, Some(status) if status.state == "indexing") {
+        return Duration::from_secs(5);
+    }
+    Duration::from_secs(45)
+}
+
 #[cfg(test)]
 mod tests {
-    use super::event_bridge_interval;
+    use super::{event_bridge_interval, worker_health_refresh_interval};
     use crate::models::{AppHealth, IndexingStatus};
     use std::time::Duration;
 
@@ -393,6 +446,13 @@ mod tests {
             database_ready: true,
             text_search_ready: true,
             semantic_search_ready: true,
+            image_semantic_ready: true,
+            text_semantic_ready: true,
+            image_vector_ready: true,
+            text_vector_ready: true,
+            image_scope_ready: true,
+            document_scope_ready: true,
+            voice_note_scope_ready: true,
             core_search_ready: true,
             core_search_phase: "ready".to_string(),
             core_search_message: "ready".to_string(),
@@ -440,6 +500,35 @@ mod tests {
         assert_eq!(
             event_bridge_interval(Some(&indexing_status("idle")), Some(&ready_health())),
             Duration::from_secs(15),
+        );
+    }
+
+    #[test]
+    fn worker_health_refresh_stays_fast_while_warming() {
+        let mut health = ready_health();
+        health.core_search_ready = false;
+        assert_eq!(
+            worker_health_refresh_interval(None, Some(&health)),
+            Duration::from_millis(500),
+        );
+    }
+
+    #[test]
+    fn worker_health_refresh_slows_down_while_indexing() {
+        assert_eq!(
+            worker_health_refresh_interval(
+                Some(&indexing_status("indexing")),
+                Some(&ready_health()),
+            ),
+            Duration::from_secs(5),
+        );
+    }
+
+    #[test]
+    fn worker_health_refresh_is_slowest_when_idle_and_ready() {
+        assert_eq!(
+            worker_health_refresh_interval(Some(&indexing_status("idle")), Some(&ready_health())),
+            Duration::from_secs(45),
         );
     }
 }

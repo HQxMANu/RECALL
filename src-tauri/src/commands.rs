@@ -74,18 +74,26 @@ pub async fn get_indexing_status(state: State<'_, AppState>) -> Result<IndexingS
 }
 
 #[tauri::command]
-pub async fn search_images(
+pub async fn search_assets(
     request: SearchRequest,
     state: State<'_, AppState>,
 ) -> Result<SearchResponse, String> {
     if request.query.trim().is_empty() {
-        return state.search_recent_images(&request);
+        return state.search_recent_assets(&request);
     }
 
     let worker = state.worker.client().await?;
     worker
-        .request("search", json!({ "request": request }))
+        .request("search_assets", json!({ "request": request }))
         .await
+}
+
+#[tauri::command]
+pub async fn search_images(
+    request: SearchRequest,
+    state: State<'_, AppState>,
+) -> Result<SearchResponse, String> {
+    search_assets(request, state).await
 }
 
 #[tauri::command]
@@ -99,12 +107,27 @@ pub async fn open_file_location(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn copy_image_path(path: String) -> Result<(), String> {
+pub async fn copy_asset_path(path: String) -> Result<(), String> {
     let canonical = canonicalize_path(&path)?;
     let mut clipboard = Clipboard::new().map_err(|error| error.to_string())?;
     clipboard
         .set_text(canonical.to_string_lossy().to_string())
         .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub async fn copy_image_path(path: String) -> Result<(), String> {
+    copy_asset_path(path).await
+}
+
+#[tauri::command]
+pub async fn open_asset_file(path: String) -> Result<(), String> {
+    let canonical = canonicalize_path(&path)?;
+    Command::new("cmd")
+        .args(["/C", "start", "", &canonical.to_string_lossy()])
+        .spawn()
+        .map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]

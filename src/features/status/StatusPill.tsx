@@ -1,16 +1,28 @@
 import type { AppHealth, IndexingStatus } from '../../types/contracts'
+import type { SearchScope } from '../../app/TopHeader'
 
 type StatusPillProps = {
   health: AppHealth
   status: IndexingStatus
+  scope: SearchScope
 }
 
-export function StatusPill({ health, status }: StatusPillProps) {
+export function StatusPill({ health, status, scope }: StatusPillProps) {
+  const scopeReady =
+    scope === 'documents'
+      ? health.documentScopeReady
+      : scope === 'voice-notes'
+        ? health.voiceNoteScopeReady
+        : health.imageScopeReady
   const message =
-    health.coreSearchPhase !== 'ready'
+    !scopeReady
       ? health.coreSearchPhase === 'error'
-        ? 'Core search failed to start'
-        : 'Core search warming'
+        ? 'Search failed to start'
+        : scope === 'documents'
+          ? 'Document search warming'
+          : scope === 'voice-notes'
+            ? 'Voice-note search warming'
+            : 'Image search warming'
       : status.state === 'indexing'
       ? `${status.itemsProcessed.toLocaleString()} / ${status.itemsTotal.toLocaleString()} indexed`
       : status.state === 'error'
@@ -18,9 +30,7 @@ export function StatusPill({ health, status }: StatusPillProps) {
         : 'Local index ready'
 
   const state =
-    health.coreSearchPhase !== 'ready'
-      ? health.coreSearchPhase
-      : status.state
+    !scopeReady ? health.coreSearchPhase : status.state
 
   return (
     <div className="status-pill" data-status={state}>

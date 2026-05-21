@@ -1,9 +1,11 @@
 import type { AppHealth, IndexingStatus } from '../types/contracts'
+import type { SearchScope } from './TopHeader'
 
 type StatusPanelProps = {
   shellReady: boolean
   status: IndexingStatus
   health: AppHealth
+  scope: SearchScope
 }
 
 function formatRelativeTime(isoDate?: string | null) {
@@ -34,9 +36,27 @@ function describeReadiness(isReady: boolean, phase: string, readyLabel = 'Ready'
   return isReady ? readyLabel : humanizePhase(phase)
 }
 
-export function StatusPanel({ shellReady, status, health }: StatusPanelProps) {
+export function StatusPanel({ shellReady, status, health, scope }: StatusPanelProps) {
   const progressRatio =
     status.itemsTotal > 0 ? Math.min(1, status.itemsProcessed / status.itemsTotal) : 0
+  const scopeReady =
+    scope === 'documents'
+      ? health.documentScopeReady
+      : scope === 'voice-notes'
+        ? health.voiceNoteScopeReady
+        : health.imageScopeReady
+  const scopeSemanticReady =
+    scope === 'images' ? health.imageSemanticReady : health.textSemanticReady
+  const scopeVectorReady =
+    scope === 'images' ? health.imageVectorReady : health.textVectorReady
+  const readinessBadge = scopeReady ? 'ready' : health.coreSearchPhase
+  const readinessCopy = scopeReady
+    ? health.coreSearchMessage
+    : scope === 'documents'
+      ? 'Document search is waiting for the local text embedding model to finish loading.'
+      : scope === 'voice-notes'
+        ? 'Voice-note search is waiting for the local transcription and text embedding models to finish loading.'
+        : 'Image search is waiting for the local vision model to finish loading.'
 
   return (
     <aside className="status-panel">
@@ -48,9 +68,9 @@ export function StatusPanel({ shellReady, status, health }: StatusPanelProps) {
           </div>
           <span
             className="health-badge"
-            data-state={health.coreSearchReady ? 'ready' : health.coreSearchPhase}
+            data-state={readinessBadge}
           >
-            {health.coreSearchReady ? 'ready' : humanizePhase(health.coreSearchPhase)}
+            {scopeReady ? 'ready' : humanizePhase(health.coreSearchPhase)}
           </span>
         </div>
 
@@ -62,8 +82,8 @@ export function StatusPanel({ shellReady, status, health }: StatusPanelProps) {
           />
           <StatusRow
             label="Semantic search"
-            value={describeReadiness(health.semanticSearchReady, health.coreSearchPhase)}
-            tone={health.semanticSearchReady ? 'ready' : health.coreSearchPhase}
+            value={describeReadiness(scopeSemanticReady, health.coreSearchPhase)}
+            tone={scopeSemanticReady ? 'ready' : health.coreSearchPhase}
           />
           <StatusRow
             label="Text search"
@@ -72,11 +92,11 @@ export function StatusPanel({ shellReady, status, health }: StatusPanelProps) {
           />
           <StatusRow
             label="Vector index"
-            value={describeReadiness(health.coreSearchReady, health.coreSearchPhase, 'Ready')}
-            tone={health.coreSearchReady ? 'ready' : health.coreSearchPhase}
+            value={describeReadiness(scopeVectorReady, health.coreSearchPhase, 'Ready')}
+            tone={scopeVectorReady ? 'ready' : health.coreSearchPhase}
           />
         </div>
-        <p className="status-card__copy">{health.coreSearchMessage}</p>
+        <p className="status-card__copy">{readinessCopy}</p>
       </section>
 
       <section className="status-card">

@@ -39,8 +39,11 @@ pub fn run() {
             commands::list_indexed_folders,
             commands::remove_indexed_folder,
             commands::get_indexing_status,
+            commands::search_assets,
             commands::search_images,
+            commands::open_asset_file,
             commands::open_file_location,
+            commands::copy_asset_path,
             commands::copy_image_path,
             commands::get_app_health,
         ])

@@ -56,8 +56,9 @@ impl WorkerClient {
             .env("PYTHONUTF8", "1")
             .env("RECALL_APP_DATA_DIR", app_data_dir)
             .env("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
-            .env("HF_HUB_OFFLINE", "1")
             .env("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+            .env("USE_TF", "0")
+            .env("TRANSFORMERS_NO_TF", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());

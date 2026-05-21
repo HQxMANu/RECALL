@@ -25,10 +25,13 @@ pub fn list_indexed_folders(app_data_dir: &Path) -> anyhow::Result<Vec<IndexedFo
     let mut statement = connection.prepare(
         r#"
     SELECT f.id, f.path, f.display_name, f.is_active,
-           COUNT(i.id) AS image_count,
-           MAX(i.last_indexed_at) AS last_indexed_at
+           COUNT(a.id) AS item_count,
+           SUM(CASE WHEN a.asset_type = 'image' THEN 1 ELSE 0 END) AS image_count,
+           SUM(CASE WHEN a.asset_type = 'document' THEN 1 ELSE 0 END) AS document_count,
+           SUM(CASE WHEN a.asset_type = 'voice-note' THEN 1 ELSE 0 END) AS voice_note_count,
+           MAX(a.last_indexed_at) AS last_indexed_at
     FROM indexed_folders f
-    LEFT JOIN indexed_images i ON i.folder_id = f.id
+    LEFT JOIN indexed_assets a ON a.folder_id = f.id
     WHERE f.is_active = 1
     GROUP BY f.id
     ORDER BY f.display_name COLLATE NOCASE
@@ -41,7 +44,10 @@ pub fn list_indexed_folders(app_data_dir: &Path) -> anyhow::Result<Vec<IndexedFo
             path: row.get("path")?,
             display_name: row.get("display_name")?,
             is_active: row.get("is_active")?,
+            item_count: row.get("item_count")?,
             image_count: row.get("image_count")?,
+            document_count: row.get("document_count")?,
+            voice_note_count: row.get("voice_note_count")?,
             last_indexed_at: row.get("last_indexed_at")?,
         })
     })?;
@@ -103,7 +109,7 @@ pub fn read_indexing_status(app_data_dir: &Path) -> anyhow::Result<IndexingStatu
     })
 }
 
-pub fn search_recent_images(
+pub fn search_recent_assets(
     app_data_dir: &Path,
     request: &SearchRequest,
 ) -> anyhow::Result<SearchResponse> {
@@ -129,23 +135,29 @@ pub fn search_recent_images(
     };
     let mut sql = format!(
         r#"
-    SELECT i.id, i.path, i.filename, i.thumbnail_path, i.modified_at_fs, i.created_at_fs,
-           i.ocr_text, i.folder_id, f.display_name AS folder_name, i.width, i.height
-    FROM indexed_images i
-    JOIN indexed_folders f ON f.id = i.folder_id
-    WHERE 1 = 1
+    SELECT a.id, a.asset_type, a.path, a.filename, a.preview_path, a.modified_at_fs, a.created_at_fs,
+           a.folder_id, f.display_name AS folder_name, a.width, a.height, a.duration_ms
+    FROM indexed_assets a
+    JOIN indexed_folders f ON f.id = a.folder_id
+    WHERE a.asset_type = ?
     "#
     );
 
-    let mut params: Vec<Value> = Vec::new();
+    let asset_type = match request.scope.as_str() {
+        "documents" => "document",
+        "voice-notes" => "voice-note",
+        _ => "image",
+    };
+
+    let mut params: Vec<Value> = vec![Value::from(asset_type.to_string())];
     if !folder_ids.is_empty() {
         let placeholders = vec!["?"; folder_ids.len()].join(",");
-        sql.push_str(&format!(" AND i.folder_id IN ({placeholders})"));
+        sql.push_str(&format!(" AND a.folder_id IN ({placeholders})"));
         params.extend(folder_ids.into_iter().map(Value::from));
     }
 
     sql.push_str(&format!(
-        " ORDER BY i.modified_at_fs {order} LIMIT ? OFFSET ?"
+        " ORDER BY a.modified_at_fs {order} LIMIT ? OFFSET ?"
     ));
     params.push(Value::from(i64::from(request.limit)));
     params.push(Value::from(i64::from(request.offset)));
@@ -153,15 +165,16 @@ pub fn search_recent_images(
     let mut statement = connection.prepare(&sql)?;
     let rows = statement.query_map(params_from_iter(params), |row| {
         Ok(SearchResult {
-            image_id: row.get("id")?,
+            asset_id: row.get("id")?,
+            asset_type: row.get("asset_type")?,
             path: row.get("path")?,
             filename: row.get("filename")?,
-            thumbnail_path: row.get("thumbnail_path")?,
+            thumbnail_path: row.get("preview_path")?,
+            preview_path: row.get("preview_path")?,
             modified_at: row.get("modified_at_fs")?,
             created_at: row.get("created_at_fs")?,
-            ocr_snippet: row
-                .get::<_, Option<String>>("ocr_text")?
-                .map(|value| value.chars().take(280).collect()),
+            ocr_snippet: None,
+            snippet: None,
             semantic_score: 0.0,
             text_score: 0.0,
             final_score: 0.0,
@@ -169,6 +182,10 @@ pub fn search_recent_images(
             folder_name: row.get("folder_name")?,
             width: row.get("width")?,
             height: row.get("height")?,
+            page_number: None,
+            start_ms: None,
+            end_ms: None,
+            duration_ms: row.get("duration_ms")?,
         })
     })?;
 

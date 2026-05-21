@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +30,10 @@ class DummyEmbedder:
 
     def embed_image(self, image_path: Path, hint_text: str = "", image: Image.Image | None = None) -> np.ndarray:
         del image_path, hint_text, image
+        return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
+
+    def embed_text(self, text: str) -> np.ndarray:
+        del text
         return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
 
@@ -100,7 +105,7 @@ class IndexingPipelineTests(unittest.TestCase):
             self.assertEqual(bad_row["error_code"], "RuntimeError")
             self.assertEqual(good_row["index_status"], "ready")
             self.assertEqual(good_row["ocr_text"], "hello world")
-            self.assertEqual(len(vector_index.upserts), 2)
+            self.assertEqual(len(vector_index.upserts), 3)
             self.assertGreaterEqual(vector_index.flush_calls, 1)
             self.assertEqual(progress_updates[-1], (2, 2))
             self.assertEqual(ocr_engine.ready_calls, 1)
@@ -146,9 +151,142 @@ class IndexingPipelineTests(unittest.TestCase):
                 [{"id": added[0]["id"], "path": str(folder_path)}],
             )
 
-            self.assertEqual(len(vector_index.upserts), 65)
+            self.assertEqual(len(vector_index.upserts), 130)
             self.assertGreaterEqual(vector_index.flush_calls, 2)
             self.assertEqual(ocr_engine.ready_calls, 1)
+            database.close()
+
+    def test_scan_folder_retries_non_ready_document_without_file_change(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder_path = root / "Docs"
+            folder_path.mkdir()
+            document_path = folder_path / "notes.txt"
+            document_path.write_text("literature review about software engineering and AI", encoding="utf-8")
+
+            config = AppConfig(
+                app_data_dir=root,
+                database_path=root / "recall.db",
+                thumbnail_dir=root / "thumbnails",
+                vector_index_path=root / "recall.faiss",
+                max_thumbnail_size=320,
+                search_limit=200,
+            )
+            config.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            database = Database(config.database_path)
+            added, _ = database.add_or_reactivate_folders(
+                [str(folder_path)],
+                "2026-05-16T00:00:00+00:00",
+            )
+            folder_id = int(added[0]["id"])
+            vector_index = RecordingVectorIndex()
+            pipeline = IndexingPipeline(
+                config,
+                database,
+                FlakyOcrEngine(),
+                DummyEmbedder(),
+                vector_index,
+            )
+
+            stat = document_path.stat()
+            created_iso = datetime.fromtimestamp(stat.st_ctime, timezone.utc).isoformat()
+            modified_iso = datetime.fromtimestamp(stat.st_mtime, timezone.utc).isoformat()
+            database.upsert_assets_batch(
+                [
+                    {
+                        "folder_id": folder_id,
+                        "asset_type": "document",
+                        "path": str(document_path),
+                        "filename": document_path.name,
+                        "extension": document_path.suffix.lower(),
+                        "content_hash": "broken",
+                        "created_at_fs": created_iso,
+                        "modified_at_fs": modified_iso,
+                        "file_size_bytes": stat.st_size,
+                        "width": None,
+                        "height": None,
+                        "duration_ms": None,
+                        "preview_path": None,
+                        "last_indexed_at": created_iso,
+                        "index_status": "error",
+                        "error_code": "ModuleNotFoundError",
+                        "error_message": "No module named 'docx'",
+                    }
+                ]
+            )
+            database._connection.execute(  # noqa: SLF001
+                "UPDATE indexed_assets SET modified_at_fs = ? WHERE path = ?",
+                (
+                    modified_iso,
+                    str(document_path),
+                ),
+            )
+            database._connection.commit()  # noqa: SLF001
+
+            pipeline.scan_folder(
+                {"id": folder_id, "path": str(folder_path)},
+                lambda total, processed: None,
+            )
+
+            asset = database.get_asset_by_path(str(document_path))
+            self.assertIsNotNone(asset)
+            self.assertEqual(asset["index_status"], "ready")
+            chunk_count = database._connection.execute(  # noqa: SLF001
+                """
+                SELECT COUNT(*)
+                FROM asset_chunks c
+                JOIN indexed_assets a ON a.id = c.asset_id
+                WHERE a.path = ?
+                """,
+                (str(document_path),),
+            ).fetchone()[0]
+            self.assertGreater(chunk_count, 0)
+            database.close()
+
+    def test_scan_folder_generates_document_preview(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder_path = root / "Docs"
+            folder_path.mkdir()
+            document_path = folder_path / "overview.txt"
+            document_path.write_text(
+                "This is the first page preview text for the literature review document. "
+                "It should render into a document thumbnail.",
+                encoding="utf-8",
+            )
+
+            config = AppConfig(
+                app_data_dir=root,
+                database_path=root / "recall.db",
+                thumbnail_dir=root / "thumbnails",
+                vector_index_path=root / "recall.faiss",
+                max_thumbnail_size=320,
+                search_limit=200,
+            )
+            config.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            database = Database(config.database_path)
+            added, _ = database.add_or_reactivate_folders(
+                [str(folder_path)],
+                "2026-05-16T00:00:00+00:00",
+            )
+            pipeline = IndexingPipeline(
+                config,
+                database,
+                FlakyOcrEngine(),
+                DummyEmbedder(),
+                RecordingVectorIndex(),
+            )
+
+            pipeline.scan_folder(
+                {"id": added[0]["id"], "path": str(folder_path)},
+                lambda total, processed: None,
+            )
+
+            asset = database.get_asset_by_path(str(document_path))
+            self.assertIsNotNone(asset)
+            self.assertEqual(asset["index_status"], "ready")
+            self.assertTrue(asset["preview_path"])
+            self.assertTrue(Path(asset["preview_path"]).exists())
             database.close()
 
     @staticmethod

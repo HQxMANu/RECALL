@@ -5,6 +5,7 @@ import type { ThumbnailSize } from '../../app/App'
 type SearchViewProps = {
   coreSearchReady: boolean
   isSearching: boolean
+  showLoadingSkeleton: boolean
   query: string
   results: SearchResult[]
   errorMessage: string | null
@@ -27,6 +28,7 @@ const thumbnailOptions: Array<{
 export function SearchView({
   coreSearchReady,
   isSearching,
+  showLoadingSkeleton,
   query,
   results,
   errorMessage,
@@ -40,7 +42,6 @@ export function SearchView({
       <header className="workspace-panel__header workspace-panel__header--compact">
         <div>
           <p className="workspace-panel__eyebrow">Results</p>
-          {!coreSearchReady ? <p className="workspace-panel__copy">{statusMessage}</p> : null}
           {errorMessage ? <p className="workspace-panel__copy">Issue: {errorMessage}</p> : null}
         </div>
 
@@ -72,6 +73,7 @@ export function SearchView({
         <ResultsGrid
           coreSearchReady={coreSearchReady}
           isSearching={isSearching}
+          showLoadingSkeleton={showLoadingSkeleton}
           query={query}
           results={results}
           statusMessage={statusMessage}

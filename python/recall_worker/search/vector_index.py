@@ -17,12 +17,16 @@ class NumpyVectorIndex:
         self._dirty = False
         self._count = 0
         self._rebuild_vectors: dict[int, np.ndarray] | None = None
+        self._rebuild_in_place = False
 
     def rebuild(self, embeddings: list[tuple[int, np.ndarray]]) -> None:
-        self._vectors = {image_id: vector.astype(np.float32) for image_id, vector in embeddings}
-        self.bootstrap_mode = "memory"
-        self._dirty = False
-        self._count = len(self._vectors)
+        self.begin_rebuild()
+        try:
+            self.add_batch(embeddings)
+            self.finish_rebuild()
+        except Exception:
+            self.abort_rebuild()
+            raise
 
     def bootstrap(
         self,
@@ -36,13 +40,17 @@ class NumpyVectorIndex:
         return True
 
     def begin_rebuild(self) -> None:
-        self._rebuild_vectors = {}
+        # The numpy fallback is already an in-memory degraded mode, so rebuild
+        # directly into the live dictionary to avoid holding two full corpora.
+        self._rebuild_vectors = self._vectors
+        self._rebuild_vectors.clear()
+        self._rebuild_in_place = True
 
     def add_batch(self, records: list[tuple[int, np.ndarray]]) -> None:
         if self._rebuild_vectors is None:
             raise RuntimeError("Vector rebuild has not been started")
         for image_id, vector in records:
-            self._rebuild_vectors[image_id] = vector.astype(np.float32)
+            self._rebuild_vectors[image_id] = np.asarray(vector, dtype=np.float32)
 
     def finish_rebuild(self, metadata: dict[str, int | str | None] | None = None) -> None:
         del metadata
@@ -50,15 +58,19 @@ class NumpyVectorIndex:
             raise RuntimeError("Vector rebuild has not been started")
         self._vectors = self._rebuild_vectors
         self._rebuild_vectors = None
+        self._rebuild_in_place = False
         self._count = len(self._vectors)
         self._dirty = False
         self.bootstrap_mode = "rebuilt"
 
     def abort_rebuild(self) -> None:
+        if self._rebuild_in_place:
+            self._vectors = {}
         self._rebuild_vectors = None
+        self._rebuild_in_place = False
 
     def upsert(self, image_id: int, vector: np.ndarray) -> None:
-        self._vectors[image_id] = vector.astype(np.float32)
+        self._vectors[image_id] = np.asarray(vector, dtype=np.float32)
         self._dirty = True
         self._count = len(self._vectors)
 

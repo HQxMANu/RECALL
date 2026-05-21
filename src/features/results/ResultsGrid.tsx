@@ -1,10 +1,12 @@
 import { resolveImageSource } from '../../lib/tauri'
 import type { ThumbnailSize } from '../../app/App'
 import type { SearchResult } from '../../types/contracts'
+import { AssetPreviewArt } from '../assets/AssetPreviewArt'
 
 type ResultsGridProps = {
   coreSearchReady: boolean
   isSearching: boolean
+  showLoadingSkeleton: boolean
   query: string
   results: SearchResult[]
   statusMessage: string
@@ -16,9 +18,34 @@ function formatScore(score: number) {
   return `${Math.round(score * 100)}%`
 }
 
+function secondaryText(result: SearchResult) {
+  if (result.assetType === 'image') {
+    return ''
+  }
+  if (result.assetType === 'voice-note' && result.startMs != null) {
+    return `Starts at ${Math.round(result.startMs / 1000)}s`
+  }
+  if (result.assetType === 'document') {
+    return ''
+  }
+  return result.folderName ?? ''
+}
+
+function bodySnippet(result: SearchResult) {
+  if (result.assetType === 'document' || result.assetType === 'image') {
+    return ''
+  }
+  return result.snippet || result.ocrSnippet || 'No text snippet available.'
+}
+
+function showTitle(result: SearchResult) {
+  return result.assetType !== 'image'
+}
+
 export function ResultsGrid({
   coreSearchReady,
   isSearching,
+  showLoadingSkeleton,
   query,
   results,
   statusMessage,
@@ -33,6 +60,33 @@ export function ResultsGrid({
           <p>{statusMessage}</p>
         </div>
       </div>
+    )
+  }
+
+  if (showLoadingSkeleton) {
+    const skeletonCount =
+      thumbnailSize === 'small' ? 12 : thumbnailSize === 'medium' ? 8 : 6
+
+    return (
+      <ul className="result-grid result-grid--skeleton" data-size={thumbnailSize}>
+        {Array.from({ length: skeletonCount }).map((_, index) => (
+          <li key={`skeleton-${index}`}>
+            <div className="result-card result-card--skeleton" aria-hidden="true">
+              <div className="result-card__thumb">
+                <div className="result-skeleton result-skeleton__thumb" />
+                <div className="result-card__scores">
+                  <span className="score-chip result-skeleton result-skeleton__chip" />
+                  <span className="score-chip result-skeleton result-skeleton__chip" />
+                </div>
+              </div>
+              <div className="result-card__body">
+                <div className="result-skeleton result-skeleton__line result-skeleton__line--title" />
+                <div className="result-skeleton result-skeleton__line" />
+              </div>
+            </div>
+          </li>
+        ))}
+      </ul>
     )
   }
 
@@ -54,9 +108,18 @@ export function ResultsGrid({
   return (
     <ul className="result-grid" data-size={thumbnailSize}>
       {results.map((result) => {
-        const imageSource = resolveImageSource(result.thumbnailPath ?? result.path)
+        const imageSource =
+          result.previewPath || result.thumbnailPath
+            ? resolveImageSource(
+                result.previewPath ??
+                  result.thumbnailPath ??
+                  (result.assetType === 'image' ? result.path : ''),
+              )
+            : result.assetType === 'image'
+              ? resolveImageSource(result.path)
+              : undefined
         return (
-          <li key={result.imageId}>
+          <li key={result.assetId}>
             <button
               type="button"
               className="result-card"
@@ -67,12 +130,19 @@ export function ResultsGrid({
                 {imageSource ? (
                   <img src={imageSource} alt={result.filename} loading="lazy" />
                 ) : (
-                  <div className="result-card__thumb-fallback">Preview unavailable</div>
+                  <div className="result-card__thumb-fallback">
+                    <AssetPreviewArt result={result} />
+                  </div>
                 )}
                 <div className="result-card__scores">
                   <span className="score-chip">semantic {formatScore(result.semanticScore)}</span>
                   <span className="score-chip">text {formatScore(result.textScore)}</span>
                 </div>
+              </div>
+              <div className="result-card__body">
+                {showTitle(result) ? <strong>{result.filename}</strong> : null}
+                {secondaryText(result) ? <p>{secondaryText(result)}</p> : null}
+                {bodySnippet(result) ? <p>{bodySnippet(result)}</p> : null}
               </div>
             </button>
           </li>

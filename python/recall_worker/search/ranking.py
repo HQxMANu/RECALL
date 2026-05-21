@@ -62,12 +62,16 @@ def blend_results(
         results.append(
             {
                 "imageId": image_id,
+                "assetId": image_id,
+                "assetType": metadata.get("asset_type", "image"),
                 "path": metadata["path"],
                 "filename": metadata["filename"],
-                "thumbnailPath": metadata.get("thumbnail_path"),
+                "thumbnailPath": metadata.get("thumbnail_path") or metadata.get("preview_path"),
+                "previewPath": metadata.get("preview_path") or metadata.get("thumbnail_path"),
                 "modifiedAt": metadata["modified_at_fs"],
                 "createdAt": metadata.get("created_at_fs"),
-                "ocrSnippet": (metadata.get("ocr_text") or "")[:280] or None,
+                "ocrSnippet": (metadata.get("ocr_text") or metadata.get("snippet") or "")[:280] or None,
+                "snippet": (metadata.get("snippet") or metadata.get("ocr_text") or "")[:280] or None,
                 "semanticScore": round(semantic_score, 4),
                 "textScore": round(text_score, 4),
                 "finalScore": round(final_score, 4),
@@ -75,6 +79,10 @@ def blend_results(
                 "folderName": metadata.get("folder_name"),
                 "width": metadata.get("width"),
                 "height": metadata.get("height"),
+                "pageNumber": metadata.get("page_number"),
+                "startMs": metadata.get("start_ms"),
+                "endMs": metadata.get("end_ms"),
+                "durationMs": metadata.get("duration_ms"),
             }
         )
 

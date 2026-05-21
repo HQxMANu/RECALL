@@ -11,12 +11,15 @@ import type {
 
 const SAMPLE_RESULTS: SearchResult[] = [
   {
-    imageId: 1,
+    assetId: 1,
+    assetType: 'image',
     path: 'C:\\Images\\Screenshots\\wifi-password.png',
     filename: 'wifi-password.png',
     thumbnailPath: null,
+    previewPath: null,
     modifiedAt: new Date().toISOString(),
     ocrSnippet: 'Wi-Fi password: cedar-lane-guest',
+    snippet: 'Wi-Fi password: cedar-lane-guest',
     semanticScore: 0.82,
     textScore: 0.91,
     finalScore: 0.88,
@@ -26,12 +29,51 @@ const SAMPLE_RESULTS: SearchResult[] = [
     height: 1080,
   },
   {
-    imageId: 2,
+    assetId: 2,
+    assetType: 'document',
+    path: 'C:\\Docs\\Research\\ai-software-engineering.docx',
+    filename: 'ai-software-engineering.docx',
+    thumbnailPath: null,
+    previewPath: null,
+    modifiedAt: new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString(),
+    ocrSnippet: null,
+    snippet: 'Research project about the capabilities of AI in software engineering workflows.',
+    semanticScore: 0.75,
+    textScore: 0.74,
+    finalScore: 0.74,
+    folderId: 2,
+    folderName: 'Research',
+    pageNumber: 3,
+  },
+  {
+    assetId: 3,
+    assetType: 'voice-note',
+    path: 'C:\\Audio\\Notes\\sprint-retro.m4a',
+    filename: 'sprint-retro.m4a',
+    thumbnailPath: null,
+    previewPath: null,
+    modifiedAt: new Date(Date.now() - 1000 * 60 * 60 * 12).toISOString(),
+    ocrSnippet: null,
+    snippet: 'Discussion about using AI tools in research and software delivery.',
+    semanticScore: 0.69,
+    textScore: 0.81,
+    finalScore: 0.77,
+    folderId: 3,
+    folderName: 'Voice notes',
+    startMs: 120000,
+    endMs: 152000,
+    durationMs: 540000,
+  },
+  {
+    assetId: 4,
+    assetType: 'image',
     path: 'C:\\Images\\Orders\\amazon-order.jpg',
     filename: 'amazon-order.jpg',
     thumbnailPath: null,
+    previewPath: null,
     modifiedAt: new Date(Date.now() - 1000 * 60 * 60 * 6).toISOString(),
     ocrSnippet: 'Amazon order delivered on Tuesday',
+    snippet: 'Amazon order delivered on Tuesday',
     semanticScore: 0.75,
     textScore: 0.74,
     finalScore: 0.74,
@@ -41,12 +83,15 @@ const SAMPLE_RESULTS: SearchResult[] = [
     height: 1080,
   },
   {
-    imageId: 3,
+    assetId: 5,
+    assetType: 'image',
     path: 'C:\\Images\\Photos\\beach-sunset.webp',
     filename: 'beach-sunset.webp',
     thumbnailPath: null,
+    previewPath: null,
     modifiedAt: new Date(Date.now() - 1000 * 60 * 60 * 32).toISOString(),
     ocrSnippet: 'No OCR text detected',
+    snippet: 'No OCR text detected',
     semanticScore: 0.94,
     textScore: 0.06,
     finalScore: 0.71,
@@ -63,23 +108,32 @@ let mockFolders: IndexedFolder[] = [
     path: 'C:\\Images\\Screenshots',
     displayName: 'Screenshots',
     isActive: true,
+    itemCount: 413,
     imageCount: 413,
+    documentCount: 0,
+    voiceNoteCount: 0,
     lastIndexedAt: new Date().toISOString(),
   },
   {
     id: 2,
-    path: 'C:\\Images\\Orders',
-    displayName: 'Orders',
+    path: 'C:\\Docs\\Research',
+    displayName: 'Research',
     isActive: true,
-    imageCount: 84,
+    itemCount: 84,
+    imageCount: 12,
+    documentCount: 72,
+    voiceNoteCount: 0,
     lastIndexedAt: new Date().toISOString(),
   },
   {
     id: 3,
-    path: 'C:\\Images\\Photos',
-    displayName: 'Photos',
+    path: 'C:\\Audio\\Notes',
+    displayName: 'Voice notes',
     isActive: true,
-    imageCount: 2612,
+    itemCount: 132,
+    imageCount: 24,
+    documentCount: 0,
+    voiceNoteCount: 108,
     lastIndexedAt: new Date().toISOString(),
   },
 ]
@@ -95,7 +149,7 @@ const containsAllTerms = (result: SearchResult, query: string) => {
     return true
   }
 
-  const haystack = `${result.filename} ${result.ocrSnippet ?? ''}`.toLowerCase()
+  const haystack = `${result.filename} ${result.ocrSnippet ?? ''} ${result.snippet ?? ''}`.toLowerCase()
   return query
     .toLowerCase()
     .split(/\s+/)
@@ -110,7 +164,10 @@ export const mockApi = {
       path: `C:\\Images\\Imported\\Batch-${mockFolders.length + 1}`,
       displayName: `Imported ${mockFolders.length + 1}`,
       isActive: true,
+      itemCount: 0,
       imageCount: 0,
+      documentCount: 0,
+      voiceNoteCount: 0,
       lastIndexedAt: null,
     }
     mockFolders = [...mockFolders, nextFolder]
@@ -138,11 +195,17 @@ export const mockApi = {
     }
   },
 
-  async searchImages(request: SearchRequest): Promise<SearchResponse> {
+  async searchAssets(request: SearchRequest): Promise<SearchResponse> {
     const filtered = SAMPLE_RESULTS.filter((result) => {
       const folderMatch =
         !request.folderIds?.length || request.folderIds.includes(result.folderId)
-      return folderMatch && containsAllTerms(result, request.query)
+      const scopeMatch =
+        request.scope === 'images'
+          ? result.assetType === 'image'
+          : request.scope === 'documents'
+            ? result.assetType === 'document'
+            : result.assetType === 'voice-note'
+      return folderMatch && scopeMatch && containsAllTerms(result, request.query)
     }).sort(searchSorters[request.sort])
 
     return {
@@ -158,7 +221,8 @@ export const mockApi = {
   },
 
   async openFileLocation(): Promise<void> {},
-  async copyImagePath(): Promise<void> {},
+  async openAssetFile(): Promise<void> {},
+  async copyAssetPath(): Promise<void> {},
 
   async getAppHealth(): Promise<AppHealth> {
     return {
@@ -166,6 +230,13 @@ export const mockApi = {
       databaseReady: true,
       textSearchReady: true,
       semanticSearchReady: true,
+      imageSemanticReady: true,
+      textSemanticReady: true,
+      imageVectorReady: true,
+      textVectorReady: true,
+      imageScopeReady: true,
+      documentScopeReady: true,
+      voiceNoteScopeReady: true,
       coreSearchReady: true,
       coreSearchPhase: 'ready',
       coreSearchMessage: 'Browser preview is treating mock semantic and text search as ready.',

@@ -17,9 +17,8 @@ tmp
 python\.venv
 python/build
 python/*.egg-info
-src-tauri\resources\python
-src-tauri\resources\worker-runtime.zip
-src-tauri\target
+src-tauri/resources/
+src-tauri/target/
 __pycache__/
 *.py[cod]
 

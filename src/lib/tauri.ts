@@ -44,12 +44,12 @@ export async function getIndexingStatus(): Promise<IndexingStatus> {
   return invoke<IndexingStatus>('get_indexing_status')
 }
 
-export async function searchImages(request: SearchRequest): Promise<SearchResponse> {
+export async function searchAssets(request: SearchRequest): Promise<SearchResponse> {
   if (api) {
-    return api.searchImages(request)
+    return api.searchAssets(request)
   }
 
-  return invoke<SearchResponse>('search_images', { request })
+  return invoke<SearchResponse>('search_assets', { request })
 }
 
 export async function openFileLocation(path: string): Promise<void> {
@@ -60,12 +60,20 @@ export async function openFileLocation(path: string): Promise<void> {
   return invoke('open_file_location', { path })
 }
 
-export async function copyImagePath(path: string): Promise<void> {
+export async function openAssetFile(path: string): Promise<void> {
   if (api) {
-    return api.copyImagePath()
+    return api.openAssetFile()
   }
 
-  return invoke('copy_image_path', { path })
+  return invoke('open_asset_file', { path })
+}
+
+export async function copyAssetPath(path: string): Promise<void> {
+  if (api) {
+    return api.copyAssetPath()
+  }
+
+  return invoke('copy_asset_path', { path })
 }
 
 export async function getAppHealth(): Promise<AppHealth> {

@@ -1,10 +1,16 @@
 import tempfile
 import unittest
+import sqlite3
 from pathlib import Path
 
 import numpy as np
 
-from recall_worker.db.database import Database
+from recall_worker.db.database import (
+    Database,
+    IMAGE_ASSET_BACKFILL_KEY,
+    IMAGE_ASSET_BACKFILL_VERSION,
+    SCHEMA_SQL,
+)
 
 
 class DatabaseTests(unittest.TestCase):
@@ -117,6 +123,106 @@ class DatabaseTests(unittest.TestCase):
             self.assertEqual([image_id for batch in batches for image_id, _ in batch], sorted(image_ids.values()))
             self.assertEqual([len(batch) for batch in batches], [2, 1])
             database.close()
+
+    def test_image_asset_backfill_runs_once_for_legacy_rows(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            database_path = Path(temp_dir) / "recall.db"
+            legacy = sqlite3.connect(database_path)
+            legacy.row_factory = sqlite3.Row
+            legacy.executescript(SCHEMA_SQL)
+            legacy.execute(
+                """
+                INSERT INTO indexed_folders(path, display_name, is_active, created_at, updated_at)
+                VALUES (?, ?, 1, ?, ?)
+                """,
+                (
+                    "C:\\Images",
+                    "Images",
+                    "2026-05-14T00:00:00+00:00",
+                    "2026-05-14T00:00:00+00:00",
+                ),
+            )
+            legacy.execute(
+                """
+                INSERT INTO indexed_images(
+                  folder_id, path, filename, extension, content_hash, created_at_fs, modified_at_fs,
+                  file_size_bytes, width, height, ocr_text, thumbnail_path,
+                  last_indexed_at, index_status, error_code, error_message
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    1,
+                    "C:\\Images\\legacy.png",
+                    "legacy.png",
+                    ".png",
+                    "legacy-hash",
+                    "2026-05-14T00:00:00+00:00",
+                    "2026-05-14T00:00:00+00:00",
+                    128,
+                    32,
+                    32,
+                    "legacy ocr",
+                    "C:\\thumbs\\legacy.jpg",
+                    "2026-05-14T00:00:00+00:00",
+                    "ready",
+                    None,
+                    None,
+                ),
+            )
+            legacy.commit()
+            legacy.close()
+
+            database = Database(database_path)
+            database.close()
+
+            verify = sqlite3.connect(database_path)
+            verify.row_factory = sqlite3.Row
+            first_asset = verify.execute(
+                "SELECT id, preview_path FROM indexed_assets WHERE path = ?",
+                ("C:\\Images\\legacy.png",),
+            ).fetchone()
+            first_chunk = verify.execute(
+                """
+                SELECT id, chunk_text
+                FROM asset_chunks
+                WHERE asset_id = ?
+                """,
+                (first_asset["id"],),
+            ).fetchone()
+            marker = verify.execute(
+                "SELECT value_json FROM app_settings WHERE key = ?",
+                (IMAGE_ASSET_BACKFILL_KEY,),
+            ).fetchone()
+            verify.close()
+
+            self.assertIsNotNone(first_asset)
+            self.assertEqual(first_asset["preview_path"], "C:\\thumbs\\legacy.jpg")
+            self.assertIsNotNone(first_chunk)
+            self.assertEqual(first_chunk["chunk_text"], "legacy ocr")
+            self.assertEqual(int(marker["value_json"]), IMAGE_ASSET_BACKFILL_VERSION)
+
+            database = Database(database_path)
+            database.close()
+
+            verify = sqlite3.connect(database_path)
+            verify.row_factory = sqlite3.Row
+            second_asset = verify.execute(
+                "SELECT id FROM indexed_assets WHERE path = ?",
+                ("C:\\Images\\legacy.png",),
+            ).fetchone()
+            second_chunk = verify.execute(
+                """
+                SELECT id
+                FROM asset_chunks
+                WHERE asset_id = ?
+                """,
+                (second_asset["id"],),
+            ).fetchone()
+            verify.close()
+
+            self.assertEqual(second_asset["id"], first_asset["id"])
+            self.assertEqual(second_chunk["id"], first_chunk["id"])
 
 
 if __name__ == "__main__":

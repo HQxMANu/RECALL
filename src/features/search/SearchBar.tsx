@@ -2,6 +2,7 @@ type SearchBarProps = {
   query: string
   disabled: boolean
   helperText: string
+  scope?: 'images' | 'documents' | 'voice-notes'
   showSuggestions?: boolean
   onQueryChange: (value: string) => void
 }
@@ -17,9 +18,23 @@ export function SearchBar({
   query,
   disabled,
   helperText,
+  scope = 'images',
   showSuggestions = true,
   onQueryChange,
 }: SearchBarProps) {
+  const enabledPlaceholder =
+    scope === 'documents'
+      ? 'Search documents in plain English'
+      : scope === 'voice-notes'
+        ? 'Search voice notes in plain English'
+        : 'Search screenshots and images in plain English'
+  const disabledPlaceholder =
+    scope === 'documents'
+      ? 'Warming local document search before enabling search'
+      : scope === 'voice-notes'
+        ? 'Warming local voice-note search before enabling search'
+        : 'Warming local image search before enabling search'
+
   return (
     <div className="search-stack">
       <input
@@ -28,11 +43,9 @@ export function SearchBar({
         disabled={disabled}
         onChange={(event) => onQueryChange(event.target.value)}
         placeholder={
-          disabled
-            ? 'Warming semantic + text search before enabling search'
-            : 'Search screenshots and images in plain English'
+          disabled ? disabledPlaceholder : enabledPlaceholder
         }
-        aria-label="Search indexed images"
+        aria-label={`Search indexed ${scope}`}
         autoFocus={!disabled}
       />
       {showSuggestions ? (

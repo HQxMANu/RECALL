@@ -8,7 +8,10 @@ pub struct IndexedFolder {
     pub path: String,
     pub display_name: String,
     pub is_active: bool,
+    pub item_count: i64,
     pub image_count: i64,
+    pub document_count: i64,
+    pub voice_note_count: i64,
     pub last_indexed_at: Option<String>,
 }
 
@@ -23,6 +26,7 @@ pub struct FolderSelectionResult {
 #[serde(rename_all = "camelCase")]
 pub struct SearchRequest {
     pub query: String,
+    pub scope: String,
     pub folder_ids: Option<Vec<i64>>,
     pub sort: String,
     pub limit: u32,
@@ -32,13 +36,16 @@ pub struct SearchRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SearchResult {
-    pub image_id: i64,
+    pub asset_id: i64,
+    pub asset_type: String,
     pub path: String,
     pub filename: String,
     pub thumbnail_path: Option<String>,
+    pub preview_path: Option<String>,
     pub modified_at: String,
     pub created_at: Option<String>,
     pub ocr_snippet: Option<String>,
+    pub snippet: Option<String>,
     pub semantic_score: f32,
     pub text_score: f32,
     pub final_score: f32,
@@ -46,6 +53,10 @@ pub struct SearchResult {
     pub folder_name: Option<String>,
     pub width: Option<u32>,
     pub height: Option<u32>,
+    pub page_number: Option<i64>,
+    pub start_ms: Option<i64>,
+    pub end_ms: Option<i64>,
+    pub duration_ms: Option<i64>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -87,6 +98,13 @@ pub struct AppHealth {
     pub database_ready: bool,
     pub text_search_ready: bool,
     pub semantic_search_ready: bool,
+    pub image_semantic_ready: bool,
+    pub text_semantic_ready: bool,
+    pub image_vector_ready: bool,
+    pub text_vector_ready: bool,
+    pub image_scope_ready: bool,
+    pub document_scope_ready: bool,
+    pub voice_note_scope_ready: bool,
     pub core_search_ready: bool,
     pub core_search_phase: String,
     pub core_search_message: String,

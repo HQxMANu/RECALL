@@ -69,8 +69,8 @@ export function FoldersView({
 
                 <div className="folder-card__meta">
                   <div>
-                    <span>Images</span>
-                    <strong>{folder.imageCount.toLocaleString()}</strong>
+                    <span>Items</span>
+                    <strong>{folder.itemCount.toLocaleString()}</strong>
                   </div>
                   <div>
                     <span>Last indexed</span>
