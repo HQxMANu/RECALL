@@ -55,6 +55,12 @@ class RecordingVectorIndex:
         self.flush_calls += 1
 
 
+class DummyTranscriptionEngine:
+    def transcribe(self, audio_path: Path) -> list[dict[str, int | str]]:
+        del audio_path
+        return [{"startMs": 0, "endMs": 2000, "text": "voice note transcript"}]
+
+
 class IndexingPipelineTests(unittest.TestCase):
     def test_scan_folder_continues_when_ocr_fails_for_one_image(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -154,6 +160,254 @@ class IndexingPipelineTests(unittest.TestCase):
             self.assertEqual(len(vector_index.upserts), 130)
             self.assertGreaterEqual(vector_index.flush_calls, 2)
             self.assertEqual(ocr_engine.ready_calls, 1)
+            database.close()
+
+    def test_process_events_reconciles_directory_change_for_supported_assets(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder_path = root / "Docs"
+            folder_path.mkdir()
+            first_document = folder_path / "existing.txt"
+            second_document = folder_path / "moved-in.txt"
+            first_document.write_text("first indexed document", encoding="utf-8")
+
+            config = AppConfig(
+                app_data_dir=root,
+                database_path=root / "recall.db",
+                thumbnail_dir=root / "thumbnails",
+                vector_index_path=root / "recall.faiss",
+                max_thumbnail_size=320,
+                search_limit=200,
+            )
+            config.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            database = Database(config.database_path)
+            added, _ = database.add_or_reactivate_folders(
+                [str(folder_path)],
+                "2026-05-16T00:00:00+00:00",
+            )
+            pipeline = IndexingPipeline(
+                config,
+                database,
+                FlakyOcrEngine(),
+                DummyEmbedder(),
+                RecordingVectorIndex(),
+            )
+
+            pipeline.scan_folder(
+                {"id": added[0]["id"], "path": str(folder_path)},
+                lambda total, processed: None,
+            )
+
+            second_document.write_text("second document added by folder-level move", encoding="utf-8")
+            pipeline.process_events(
+                [{"kind": "modify", "path": str(folder_path)}],
+                [{"id": added[0]["id"], "path": str(folder_path)}],
+            )
+
+            existing_asset = database.get_asset_by_path(str(first_document))
+            moved_asset = database.get_asset_by_path(str(second_document))
+            self.assertIsNotNone(existing_asset)
+            self.assertIsNotNone(moved_asset)
+            self.assertEqual(existing_asset["index_status"], "ready")
+            self.assertEqual(moved_asset["index_status"], "ready")
+            database.close()
+
+    def test_process_events_reconciles_folder_for_audio_file_events(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder_path = root / "Photos"
+            folder_path.mkdir()
+            existing_document = folder_path / "notes.txt"
+            audio_file = folder_path / "voice.m4a"
+            existing_document.write_text("notes stored beside the voice recording", encoding="utf-8")
+            audio_file.write_bytes(b"fake m4a bytes")
+
+            config = AppConfig(
+                app_data_dir=root,
+                database_path=root / "recall.db",
+                thumbnail_dir=root / "thumbnails",
+                vector_index_path=root / "recall.faiss",
+                max_thumbnail_size=320,
+                search_limit=200,
+            )
+            config.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            database = Database(config.database_path)
+            added, _ = database.add_or_reactivate_folders(
+                [str(folder_path)],
+                "2026-05-16T00:00:00+00:00",
+            )
+            vector_index = RecordingVectorIndex()
+            embedder = DummyEmbedder()
+            pipeline = IndexingPipeline(
+                config,
+                database,
+                FlakyOcrEngine(),
+                embedder,
+                text_embedder=embedder,
+                image_vector_index=vector_index,
+                text_vector_index=vector_index,
+                transcription_engine=DummyTranscriptionEngine(),
+            )
+
+            pipeline.process_events(
+                [{"kind": "modify", "path": str(audio_file)}],
+                [{"id": added[0]["id"], "path": str(folder_path)}],
+            )
+
+            document_asset = database.get_asset_by_path(str(existing_document))
+            voice_asset = database.get_asset_by_path(str(audio_file))
+            self.assertIsNotNone(document_asset)
+            self.assertIsNotNone(voice_asset)
+            self.assertEqual(document_asset["asset_type"], "document")
+            self.assertEqual(voice_asset["asset_type"], "voice-note")
+            self.assertEqual(voice_asset["index_status"], "ready")
+            database.close()
+
+    def test_process_events_falls_back_to_global_reconcile_for_noop_batches(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder_path = root / "Documents"
+            folder_path.mkdir()
+            audio_file = folder_path / "recording.m4a"
+            audio_file.write_bytes(b"fake m4a bytes")
+
+            config = AppConfig(
+                app_data_dir=root,
+                database_path=root / "recall.db",
+                thumbnail_dir=root / "thumbnails",
+                vector_index_path=root / "recall.faiss",
+                max_thumbnail_size=320,
+                search_limit=200,
+            )
+            config.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            database = Database(config.database_path)
+            added, _ = database.add_or_reactivate_folders(
+                [str(folder_path)],
+                "2026-05-16T00:00:00+00:00",
+            )
+            vector_index = RecordingVectorIndex()
+            embedder = DummyEmbedder()
+            pipeline = IndexingPipeline(
+                config,
+                database,
+                FlakyOcrEngine(),
+                embedder,
+                text_embedder=embedder,
+                image_vector_index=vector_index,
+                text_vector_index=vector_index,
+                transcription_engine=DummyTranscriptionEngine(),
+            )
+
+            transient_path = root / "OneDrive-temp" / "transient.tmp"
+            pipeline.process_events(
+                [{"kind": "modify", "path": str(transient_path)}],
+                [{"id": added[0]["id"], "path": str(folder_path)}],
+            )
+
+            voice_asset = database.get_asset_by_path(str(audio_file))
+            self.assertIsNotNone(voice_asset)
+            self.assertEqual(voice_asset["asset_type"], "voice-note")
+            self.assertEqual(voice_asset["index_status"], "ready")
+            database.close()
+
+    def test_process_events_reconciles_missing_path_when_delete_has_no_direct_match(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder_path = root / "Docs"
+            folder_path.mkdir()
+            existing_document = folder_path / "existing.txt"
+            removed_document = folder_path / "removed.txt"
+            existing_document.write_text("still here", encoding="utf-8")
+            removed_document.write_text("should be pruned", encoding="utf-8")
+
+            config = AppConfig(
+                app_data_dir=root,
+                database_path=root / "recall.db",
+                thumbnail_dir=root / "thumbnails",
+                vector_index_path=root / "recall.faiss",
+                max_thumbnail_size=320,
+                search_limit=200,
+            )
+            config.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            database = Database(config.database_path)
+            added, _ = database.add_or_reactivate_folders(
+                [str(folder_path)],
+                "2026-05-16T00:00:00+00:00",
+            )
+            pipeline = IndexingPipeline(
+                config,
+                database,
+                FlakyOcrEngine(),
+                DummyEmbedder(),
+                RecordingVectorIndex(),
+            )
+
+            pipeline.scan_folder(
+                {"id": added[0]["id"], "path": str(folder_path)},
+                lambda total, processed: None,
+            )
+
+            removed_document.unlink()
+            stale_directory_path = folder_path / "missing-subdir"
+            pipeline.process_events(
+                [{"kind": "delete", "path": str(stale_directory_path)}],
+                [{"id": added[0]["id"], "path": str(folder_path)}],
+            )
+
+            self.assertIsNotNone(database.get_asset_by_path(str(existing_document)))
+            self.assertIsNone(database.get_asset_by_path(str(removed_document)))
+            database.close()
+
+    def test_process_events_reconciles_cross_folder_move_when_delete_event_only_reports_old_path(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source_folder = root / "Photos"
+            destination_folder = root / "Documents"
+            source_folder.mkdir()
+            destination_folder.mkdir()
+            original_path = source_folder / "moved.txt"
+            moved_path = destination_folder / "moved.txt"
+            original_path.write_text("this file was moved between indexed folders", encoding="utf-8")
+
+            config = AppConfig(
+                app_data_dir=root,
+                database_path=root / "recall.db",
+                thumbnail_dir=root / "thumbnails",
+                vector_index_path=root / "recall.faiss",
+                max_thumbnail_size=320,
+                search_limit=200,
+            )
+            config.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            database = Database(config.database_path)
+            added, _ = database.add_or_reactivate_folders(
+                [str(source_folder), str(destination_folder)],
+                "2026-05-16T00:00:00+00:00",
+            )
+            pipeline = IndexingPipeline(
+                config,
+                database,
+                FlakyOcrEngine(),
+                DummyEmbedder(),
+                RecordingVectorIndex(),
+            )
+
+            for folder in added:
+                pipeline.scan_folder(
+                    {"id": folder["id"], "path": folder["path"]},
+                    lambda total, processed: None,
+                )
+
+            original_path.replace(moved_path)
+
+            pipeline.process_events(
+                [{"kind": "delete", "path": str(original_path)}],
+                [{"id": folder["id"], "path": folder["path"]} for folder in added],
+            )
+
+            self.assertIsNone(database.get_asset_by_path(str(original_path)))
+            moved_asset = database.get_asset_by_path(str(moved_path))
+            self.assertIsNotNone(moved_asset)
+            self.assertEqual(moved_asset["index_status"], "ready")
             database.close()
 
     def test_scan_folder_retries_non_ready_document_without_file_change(self) -> None:

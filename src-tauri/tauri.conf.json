@@ -17,6 +17,10 @@
         "height": 940,
         "minWidth": 1080,
         "minHeight": 760,
+        "transparent": true,
+        "windowEffects": {
+          "effects": ["micaDark"]
+        },
         "resizable": true,
         "fullscreen": false,
         "center": true

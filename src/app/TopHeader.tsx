@@ -27,7 +27,7 @@ export function TopHeader({
 }: TopHeaderProps) {
   const scopeOptions: Array<{ value: SearchScope; label: string }> = [
     { value: 'images', label: 'Images' },
-    { value: 'voice-notes', label: 'Voice notes' },
+    { value: 'voice-notes', label: 'Voice rec' },
     { value: 'documents', label: 'Documents' },
   ]
 

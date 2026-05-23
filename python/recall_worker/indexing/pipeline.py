@@ -113,6 +113,11 @@ class IndexingPipeline:
             self._normalize_path(Path(folder["path"])): int(folder["id"])
             for folder in indexed_folders
         }
+        folder_records_by_id = {
+            int(folder["id"]): folder
+            for folder in indexed_folders
+        }
+        active_folder_ids = set(folder_records_by_id)
         if any(
             event["kind"] != "delete" and Path(event["path"]).suffix.lower() in IMAGE_EXTENSIONS
             for event in events
@@ -124,9 +129,13 @@ class IndexingPipeline:
         prepared_count = 0
         flush_count = 0
         max_chunk_len = 0
+        reconciled_folder_ids: set[int] = set()
+        requires_global_reconcile = False
+        requires_fallback_reconcile = False
         started = perf_counter()
         for event in events:
             path = Path(event["path"])
+            folder_match = self._match_folder_id(path, folder_lookup)
             if event["kind"] == "delete" or not path.exists():
                 deleted = self.database.delete_path(str(path))
                 for image_id in deleted["imageIds"]:
@@ -135,16 +144,40 @@ class IndexingPipeline:
                 for chunk_id in deleted["textChunkIds"]:
                     self.text_vector_index.remove(chunk_id)
                     removed_text = True
+                if folder_match is not None:
+                    if len(active_folder_ids) > 1:
+                        # A delete event inside one indexed folder can actually
+                        # represent a move into a different indexed folder when
+                        # the watcher only reports the source path. Reconcile
+                        # all indexed folders so the asset can be rediscovered
+                        # at its new location.
+                        requires_global_reconcile = True
+                    else:
+                        reconciled_folder_ids.add(folder_match)
+                continue
+
+            if path.is_dir():
+                if folder_match is not None:
+                    reconciled_folder_ids.add(folder_match)
                 continue
 
             if path.suffix.lower() not in SUPPORTED_EXTENSIONS:
+                if folder_match is not None:
+                    reconciled_folder_ids.add(folder_match)
                 continue
 
-            match = self._match_folder_id(path, folder_lookup)
-            if match is None:
+            if folder_match is None:
                 continue
 
-            prepared = self.process_asset(match, path)
+            if path.suffix.lower() not in IMAGE_EXTENSIONS:
+                # Document and audio writes often arrive through temp-file or
+                # cloud-sync flows where the final file contents/path settle
+                # after the first watcher event. Reconcile the whole folder so
+                # the finished asset state on disk is what gets indexed.
+                reconciled_folder_ids.add(folder_match)
+                continue
+
+            prepared = self.process_asset(folder_match, path)
             if prepared is None:
                 continue
             chunk.append(prepared)
@@ -158,6 +191,29 @@ class IndexingPipeline:
         if chunk:
             self.flush_chunk(chunk)
             flush_count += 1
+        if (
+            events
+            and not prepared_count
+            and not removed_image
+            and not removed_text
+            and not reconciled_folder_ids
+            and active_folder_ids
+        ):
+            # Some desktop/cloud-sync flows emit watcher events that point to
+            # transient paths or produce no direct file-level delta even though
+            # the indexed folders have changed. Fall back to a full active-folder
+            # reconcile so new supported assets are rediscovered instead of
+            # silently missing from search.
+            requires_fallback_reconcile = True
+        if requires_global_reconcile:
+            reconciled_folder_ids.update(active_folder_ids)
+        if requires_fallback_reconcile:
+            reconciled_folder_ids.update(active_folder_ids)
+        for folder_id in sorted(reconciled_folder_ids):
+            folder_record = folder_records_by_id.get(folder_id)
+            if folder_record is None:
+                continue
+            self.scan_folder(folder_record, lambda total, processed: None)
         if removed_image:
             self.image_vector_index.flush(self.database.get_embeddings_state())
         if removed_text:
@@ -169,6 +225,8 @@ class IndexingPipeline:
                 or flush_count > 1
                 or removed_image
                 or removed_text
+                or bool(reconciled_folder_ids)
+                or requires_global_reconcile
                 or duration_ms >= self.watcher_log_duration_ms
             )
             if should_log:
@@ -177,6 +235,9 @@ class IndexingPipeline:
                         "Processed fs events: "
                         f"events={len(events)} prepared={prepared_count} removedImages={int(removed_image)} "
                         f"removedText={int(removed_text)} flushes={flush_count} "
+                        f"globalReconcile={int(requires_global_reconcile)} "
+                        f"fallbackReconcile={int(requires_fallback_reconcile)} "
+                        f"reconciledFolders={len(reconciled_folder_ids)} "
                         f"max_chunk={max_chunk_len} took={duration_ms}ms"
                     ),
                     file=sys.stderr,

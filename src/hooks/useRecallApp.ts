@@ -167,7 +167,7 @@ export function useRecallApp(scope: SearchScope) {
     : scope === 'documents'
       ? 'Warming local document search before enabling search.'
       : scope === 'voice-notes'
-        ? 'Warming local voice-note search before enabling search.'
+        ? 'Warming local voice rec search before enabling search.'
         : 'Warming local image search before enabling search.'
 
   const activeFolderSet = useMemo(

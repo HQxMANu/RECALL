@@ -41,7 +41,7 @@ export function AssetPreviewArt({
   if (result.assetType === 'voice-note') {
     return (
       <div className={`asset-art asset-art--audio asset-art--${mode}`}>
-        <div className="asset-art__audio-chip">VOICE NOTE</div>
+        <div className="asset-art__audio-chip">VOICE REC</div>
         <div className="asset-art__waveform" aria-hidden="true">
           {Array.from({ length: 12 }).map((_, index) => (
             <span

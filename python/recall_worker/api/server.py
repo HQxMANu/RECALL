@@ -140,7 +140,26 @@ class RecallWorker:
             "dispatchedFsEvents": 0,
             "mergedFullIndexJobs": 0,
             "dedupedFullIndexJobs": 0,
+            "scheduledMixedAssetRescans": 0,
+            "scheduledStartupReconciles": 0,
         }
+        active_folder_records = self.database.get_active_folder_records()
+        active_folder_ids = [int(folder["id"]) for folder in active_folder_records]
+        requires_mixed_asset_rescan = self.database.needs_mixed_asset_rescan()
+        if active_folder_ids:
+            startup_payload = {
+                "folderIds": active_folder_ids,
+                "triggerSource": "startup_reconcile",
+            }
+            if requires_mixed_asset_rescan:
+                startup_payload["triggerSource"] = "mixed_asset_upgrade"
+                startup_payload["markMixedAssetRescanOnSuccess"] = True
+                self._scheduler_metrics["scheduledMixedAssetRescans"] += 1
+            else:
+                self._scheduler_metrics["scheduledStartupReconciles"] += 1
+            self._enqueue("full_index", startup_payload)
+        elif requires_mixed_asset_rescan:
+            self.database.mark_mixed_asset_rescan_complete()
         self._job_thread = threading.Thread(target=self._job_loop, daemon=True, name="recall-indexer")
         self._job_thread.start()
         self._preview_backfill_thread = threading.Thread(
@@ -258,17 +277,17 @@ class RecallWorker:
 
         if image_scope_ready and document_scope_ready and voice_note_scope_ready:
             core_search_phase = "ready"
-            core_search_message = "Image, document, and voice-note search are fully ready."
+            core_search_message = "Image, document, and voice rec search are fully ready."
         elif image_scope_ready:
             core_search_phase = "ready"
             core_search_message = (
-                "Image search is ready. Document and voice-note semantic search will finish once "
+                "Image search is ready. Document and voice rec semantic search will finish once "
                 "the local text models are available."
             )
         elif document_scope_ready or voice_note_scope_ready:
             core_search_phase = "ready"
             core_search_message = (
-                "Document and voice-note search are ready. Image semantic search will finish once "
+                "Document and voice rec search are ready. Image semantic search will finish once "
                 "the local vision model is available."
             )
         else:
@@ -578,6 +597,8 @@ class RecallWorker:
                     self.pipeline.process_events(payload.get("events") or [], folders)
 
                 self.database.finish_job(job_id, utcnow_iso(), "completed")
+                if payload.get("markMixedAssetRescanOnSuccess"):
+                    self.database.mark_mixed_asset_rescan_complete()
                 with self._status_lock:
                     self.status.state = "idle"
                     self.status.active_job_id = None

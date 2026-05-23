@@ -59,7 +59,7 @@ const SAMPLE_RESULTS: SearchResult[] = [
     textScore: 0.81,
     finalScore: 0.77,
     folderId: 3,
-    folderName: 'Voice notes',
+    folderName: 'Voice rec',
     startMs: 120000,
     endMs: 152000,
     durationMs: 540000,
@@ -128,7 +128,7 @@ let mockFolders: IndexedFolder[] = [
   {
     id: 3,
     path: 'C:\\Audio\\Notes',
-    displayName: 'Voice notes',
+    displayName: 'Voice rec',
     isActive: true,
     itemCount: 132,
     imageCount: 24,

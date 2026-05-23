@@ -11,6 +11,8 @@ import numpy as np
 
 IMAGE_ASSET_BACKFILL_VERSION = 1
 IMAGE_ASSET_BACKFILL_KEY = "image_assets_backfill_version"
+MIXED_ASSET_RESCAN_VERSION = 1
+MIXED_ASSET_RESCAN_KEY = "mixed_asset_folder_rescan_version"
 
 
 SCHEMA_SQL = """
@@ -180,6 +182,15 @@ class Database:
     def close(self) -> None:
         with self._lock:
             self._connection.close()
+
+    def needs_mixed_asset_rescan(self) -> bool:
+        with self._lock:
+            return self._read_setting_locked(MIXED_ASSET_RESCAN_KEY) != MIXED_ASSET_RESCAN_VERSION
+
+    def mark_mixed_asset_rescan_complete(self) -> None:
+        with self._lock:
+            self._write_setting_locked(MIXED_ASSET_RESCAN_KEY, MIXED_ASSET_RESCAN_VERSION)
+            self._connection.commit()
 
     def add_or_reactivate_folders(
         self,

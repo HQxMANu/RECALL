@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import recallLogo from '../assets/recall-logo.png'
 
 export type WorkspaceView = 'search' | 'folders'
 
@@ -43,15 +44,9 @@ const NAV_ITEMS: NavItem[] = [
 export function LeftNavRail({ activeView, onChangeView }: LeftNavRailProps) {
   return (
     <aside className="nav-rail" aria-label="Primary navigation">
-      <button
-        type="button"
-        className="nav-rail__brand"
-        onClick={() => onChangeView('search')}
-        aria-label="Go to search"
-      >
-        <span className="nav-rail__brand-ring" />
-        <span className="nav-rail__brand-mark">R</span>
-      </button>
+      <div className="nav-rail__brand" aria-hidden="true">
+        <img className="nav-rail__brand-logo" src={recallLogo} alt="" />
+      </div>
 
       <nav className="nav-rail__nav">
         {NAV_ITEMS.map((item) => {

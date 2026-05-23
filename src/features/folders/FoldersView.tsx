@@ -41,9 +41,6 @@ export function FoldersView({
         <div>
           <p className="workspace-panel__eyebrow">Indexed folders</p>
           <h2>Folder management</h2>
-          <p className="workspace-panel__copy">
-            Choose what Recall indexes and which folders should filter live search results.
-          </p>
         </div>
 
         <button type="button" className="button-primary" onClick={onAddFolders}>
@@ -71,6 +68,18 @@ export function FoldersView({
                   <div>
                     <span>Items</span>
                     <strong>{folder.itemCount.toLocaleString()}</strong>
+                  </div>
+                  <div>
+                    <span>Images</span>
+                    <strong>{folder.imageCount.toLocaleString()}</strong>
+                  </div>
+                  <div>
+                    <span>Documents</span>
+                    <strong>{folder.documentCount.toLocaleString()}</strong>
+                  </div>
+                  <div>
+                    <span>Voice rec</span>
+                    <strong>{folder.voiceNoteCount.toLocaleString()}</strong>
                   </div>
                   <div>
                     <span>Last indexed</span>
@@ -103,7 +112,10 @@ export function FoldersView({
         <div className="workspace-empty">
           <div className="workspace-empty__panel">
             <h3>No folders indexed yet</h3>
-            <p>Add a screenshots or photos folder to start building the local search index.</p>
+            <p>
+              Add any folder with a mix of images, documents, or voice rec to start building
+              the local search index.
+            </p>
           </div>
         </div>
       )}
