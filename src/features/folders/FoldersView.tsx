@@ -4,6 +4,8 @@ type FoldersViewProps = {
   folders: IndexedFolder[]
   activeFolderIds: Set<number>
   onAddFolders: () => void
+  onRebuildAll: () => void
+  onRebuildFolder: (folderId: number) => void
   onRemoveFolder: (folderId: number) => void
   onToggleFolder: (folderId: number) => void
 }
@@ -32,6 +34,8 @@ export function FoldersView({
   folders,
   activeFolderIds,
   onAddFolders,
+  onRebuildAll,
+  onRebuildFolder,
   onRemoveFolder,
   onToggleFolder,
 }: FoldersViewProps) {
@@ -43,9 +47,14 @@ export function FoldersView({
           <h2>Folder management</h2>
         </div>
 
-        <button type="button" className="button-primary" onClick={onAddFolders}>
-          Add folder
-        </button>
+        <div className="folder-workspace__header-actions">
+          <button type="button" className="button-secondary" onClick={onRebuildAll}>
+            Rebuild all
+          </button>
+          <button type="button" className="button-primary" onClick={onAddFolders}>
+            Add folder
+          </button>
+        </div>
       </header>
 
       {folders.length ? (
@@ -94,6 +103,13 @@ export function FoldersView({
                     onClick={() => onToggleFolder(folder.id)}
                   >
                     {isActive ? 'Remove filter' : 'Use as filter'}
+                  </button>
+                  <button
+                    type="button"
+                    className="button-secondary"
+                    onClick={() => onRebuildFolder(folder.id)}
+                  >
+                    Rebuild
                   </button>
                   <button
                     type="button"

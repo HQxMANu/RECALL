@@ -3,10 +3,13 @@ $ErrorActionPreference = "Stop"
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $pythonDir = Join-Path $projectRoot "python"
 $runtimeRoot = Join-Path $projectRoot "src-tauri\resources\python"
-$legacyRuntimeZip = Join-Path $projectRoot "src-tauri\resources\worker-runtime.zip"
+$runtimeReportPath = Join-Path $projectRoot "src-tauri\resources\python-runtime-report.json"
+$runtimeSmokeScript = Join-Path $projectRoot "scripts\smoke_worker_runtime.py"
+$runtimeBudgetMb = if ($env:RECALL_RUNTIME_MAX_MB) { [double]$env:RECALL_RUNTIME_MAX_MB } else { 1500.0 }
+$runtimeBudgetFiles = if ($env:RECALL_RUNTIME_MAX_FILES) { [int]$env:RECALL_RUNTIME_MAX_FILES } else { 25000 }
 
 if (-not (Test-Path (Join-Path $pythonDir ".venv\Scripts\python.exe"))) {
-  throw "Python runtime not found at $pythonDir\.venv. Run scripts\\package-models.ps1 first."
+  throw "Python runtime not found at $pythonDir\.venv. Create python\.venv and install the worker dependencies first."
 }
 
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $runtimeRoot) | Out-Null
@@ -27,26 +30,29 @@ function Sync-Tree {
 
 $runtimeVenv = Join-Path $runtimeRoot ".venv"
 New-Item -ItemType Directory -Force -Path $runtimeVenv | Out-Null
-Sync-Tree (Join-Path $pythonDir ".venv\\Lib") (Join-Path $runtimeVenv "Lib")
-Sync-Tree (Join-Path $pythonDir ".venv\\Scripts") (Join-Path $runtimeVenv "Scripts")
-Copy-Item -LiteralPath (Join-Path $pythonDir ".venv\\pyvenv.cfg") -Destination (Join-Path $runtimeVenv "pyvenv.cfg") -Force
+Sync-Tree (Join-Path $pythonDir ".venv\Lib") (Join-Path $runtimeVenv "Lib")
+Sync-Tree (Join-Path $pythonDir ".venv\Scripts") (Join-Path $runtimeVenv "Scripts")
+Copy-Item -LiteralPath (Join-Path $pythonDir ".venv\pyvenv.cfg") -Destination (Join-Path $runtimeVenv "pyvenv.cfg") -Force
 Sync-Tree (Join-Path $pythonDir "recall_worker") (Join-Path $runtimeRoot "recall_worker")
 Copy-Item -LiteralPath (Join-Path $pythonDir "run_worker.py") -Destination (Join-Path $runtimeRoot "run_worker.py") -Force
 
-if (Test-Path $legacyRuntimeZip) {
-  Remove-Item -LiteralPath $legacyRuntimeZip -Force
-}
-
 $env:RECALL_RUNTIME_ROOT = $runtimeRoot
+$env:RECALL_RUNTIME_REPORT = $runtimeReportPath
+$env:RECALL_RUNTIME_MAX_MB = [string]$runtimeBudgetMb
+$env:RECALL_RUNTIME_MAX_FILES = [string]$runtimeBudgetFiles
 
 @'
 from __future__ import annotations
 
+import json
 import os
 import shutil
 from pathlib import Path
 
 runtime_root = Path(os.environ["RECALL_RUNTIME_ROOT"])
+runtime_report = Path(os.environ["RECALL_RUNTIME_REPORT"])
+max_mb = float(os.environ["RECALL_RUNTIME_MAX_MB"])
+max_files = int(os.environ["RECALL_RUNTIME_MAX_FILES"])
 venv_root = runtime_root / ".venv"
 site_packages = venv_root / "Lib" / "site-packages"
 protected_roots = [
@@ -83,6 +89,37 @@ def stat_tree(path: Path) -> tuple[int, int]:
 
 def is_protected(path: Path) -> bool:
     return any(root == path or root in path.parents for root in protected_roots if root.exists())
+
+
+def top_largest_roots() -> list[dict[str, object]]:
+    candidates: list[Path] = []
+    if site_packages.exists():
+        candidates.extend(site_packages.iterdir())
+    candidates.extend(
+        candidate
+        for candidate in runtime_root.iterdir()
+        if candidate.name not in {".venv"} and candidate.is_dir()
+    )
+    unique_candidates: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        unique_candidates.append(candidate)
+    roots: list[dict[str, object]] = []
+    for candidate in unique_candidates:
+        file_count, total_size = stat_tree(candidate)
+        roots.append(
+            {
+                "path": str(candidate),
+                "name": candidate.name,
+                "fileCount": file_count,
+                "sizeMb": round(total_size / 1024 / 1024, 2),
+            }
+        )
+    roots.sort(key=lambda item: item["sizeMb"], reverse=True)
+    return roots[:10]
 
 
 for relative in [
@@ -132,8 +169,42 @@ for script_name in [
     remove_path(venv_root / "Scripts" / script_name)
 
 file_count, total_size = stat_tree(runtime_root)
+total_size_mb = round(total_size / 1024 / 1024, 2)
+report = {
+    "runtimeRoot": str(runtime_root),
+    "fileCount": file_count,
+    "sizeMb": total_size_mb,
+    "maxFilesBudget": max_files,
+    "maxSizeMbBudget": max_mb,
+    "largestRoots": top_largest_roots(),
+}
+runtime_report.write_text(json.dumps(report, indent=2), encoding="utf-8")
 print(
     f"Prepared Recall worker runtime at {runtime_root} "
-    f"({file_count} files, {total_size / 1024 / 1024:.2f} MB)"
+    f"({file_count} files, {total_size_mb:.2f} MB)"
 )
+print("Top largest runtime roots:")
+for root in report["largestRoots"]:
+    print(f"  - {root['name']}: {root['sizeMb']} MB ({root['fileCount']} files)")
+
+if total_size_mb > max_mb:
+    raise SystemExit(
+        f"Prepared runtime is {total_size_mb:.2f} MB, which exceeds the {max_mb:.2f} MB budget."
+    )
+if file_count > max_files:
+    raise SystemExit(
+        f"Prepared runtime has {file_count} files, which exceeds the {max_files} file budget."
+    )
 '@ | python -
+
+$stagedPython = Join-Path $runtimeVenv "Scripts\python.exe"
+if (-not (Test-Path $stagedPython)) {
+  throw "Staged python executable missing after runtime preparation: $stagedPython"
+}
+
+if (-not $env:RECALL_SKIP_RUNTIME_SMOKE) {
+  & $stagedPython $runtimeSmokeScript --runtime-root $runtimeRoot
+  if ($LASTEXITCODE -ne 0) {
+    throw "Staged Recall worker smoke test failed."
+  }
+}

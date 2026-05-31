@@ -42,6 +42,7 @@ More detail:
 - [Architecture notes](docs/architecture.md)
 - [SQLite schema](docs/schema.md)
 - [Ranking notes](docs/ranking.md)
+- [Windows beta release checklist](docs/release-checklist.md)
 
 ## Local-first design
 
@@ -53,7 +54,7 @@ More detail:
 
 ## Current status
 
-Recall is an active prototype with real local indexing and search, not just a UI mockup. The repository is Windows-first and currently optimized around desktop development on Windows.
+Recall is being prepared for a Windows-only public beta release. The repository is Windows-first and the first supported installer target is NSIS.
 
 ## Run locally
 
@@ -88,16 +89,26 @@ npm run dev:tauri
 npm run build:tauri
 ```
 
+### Public beta target
+
+- Windows 11 first
+- NSIS installer only for `0.1.0-beta.1`
+- Bundled local Python worker runtime
+- No cloud fallback in the runtime path
+
 ## Validation
 
 - Frontend typecheck: `npm run typecheck`
 - Frontend lint: `npm run lint`
 - Python tests: `python -m unittest discover -s python/tests -t python`
+- Packaged worker smoke check: `npm run smoke:runtime`
+- Full beta gate: `npm run validate:release`
 
 ## Notes
 
 - This repository currently includes a Python ML stack, so local build artifacts can get large during development.
 - The packaged runtime is pruned for distribution, but the development workspace is still heavier than a typical CRUD desktop app.
+- The release path is currently scoped to Windows-only beta validation before broader platform or installer support is attempted.
 
 ## License
 

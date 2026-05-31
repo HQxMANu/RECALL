@@ -62,7 +62,7 @@ def blend_results(
         results.append(
             {
                 "imageId": image_id,
-                "assetId": image_id,
+                "assetId": int(metadata.get("asset_id", image_id)),
                 "assetType": metadata.get("asset_type", "image"),
                 "path": metadata["path"],
                 "filename": metadata["filename"],

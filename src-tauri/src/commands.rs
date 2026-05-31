@@ -1,8 +1,4 @@
-use std::{
-    fs,
-    path::{Path, PathBuf},
-    process::Command,
-};
+use std::process::Command;
 
 use arboard::Clipboard;
 use rfd::FileDialog;
@@ -69,6 +65,20 @@ pub async fn remove_indexed_folder(
 }
 
 #[tauri::command]
+pub async fn rebuild_index(
+    folder_ids: Option<Vec<i64>>,
+    app: AppHandle,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    let worker = state.worker.client().await?;
+    let _: serde_json::Value = worker
+        .request("rebuild_index", json!({ "folderIds": folder_ids.unwrap_or_default() }))
+        .await?;
+    state.emit_current_snapshots(&app).await?;
+    Ok(())
+}
+
+#[tauri::command]
 pub async fn get_indexing_status(state: State<'_, AppState>) -> Result<IndexingStatus, String> {
     state.read_indexing_status()
 }
@@ -97,8 +107,17 @@ pub async fn search_images(
 }
 
 #[tauri::command]
-pub async fn open_file_location(path: String) -> Result<(), String> {
-    let canonical = canonicalize_path(&path)?;
+pub async fn resolve_asset_preview_source(
+    asset_id: i64,
+    variant: String,
+    state: State<'_, AppState>,
+) -> Result<Option<String>, String> {
+    state.resolve_asset_preview_source(asset_id, &variant)
+}
+
+#[tauri::command]
+pub async fn open_file_location(asset_id: i64, state: State<'_, AppState>) -> Result<(), String> {
+    let canonical = state.resolve_asset_path(asset_id)?;
     Command::new("explorer")
         .arg(format!("/select,{}", canonical.display()))
         .spawn()
@@ -107,8 +126,8 @@ pub async fn open_file_location(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn copy_asset_path(path: String) -> Result<(), String> {
-    let canonical = canonicalize_path(&path)?;
+pub async fn copy_asset_path(asset_id: i64, state: State<'_, AppState>) -> Result<(), String> {
+    let canonical = state.resolve_asset_path(asset_id)?;
     let mut clipboard = Clipboard::new().map_err(|error| error.to_string())?;
     clipboard
         .set_text(canonical.to_string_lossy().to_string())
@@ -116,30 +135,17 @@ pub async fn copy_asset_path(path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn copy_image_path(path: String) -> Result<(), String> {
-    copy_asset_path(path).await
+pub async fn copy_image_path(asset_id: i64, state: State<'_, AppState>) -> Result<(), String> {
+    copy_asset_path(asset_id, state).await
 }
 
 #[tauri::command]
-pub async fn open_asset_file(path: String) -> Result<(), String> {
-    let canonical = canonicalize_path(&path)?;
-    Command::new("cmd")
-        .args(["/C", "start", "", &canonical.to_string_lossy()])
-        .spawn()
-        .map_err(|error| error.to_string())?;
-    Ok(())
+pub async fn open_asset_file(asset_id: i64, state: State<'_, AppState>) -> Result<(), String> {
+    let canonical = state.resolve_asset_path(asset_id)?;
+    opener::open(&canonical).map_err(|error| error.to_string())
 }
 
 #[tauri::command]
 pub async fn get_app_health(state: State<'_, AppState>) -> Result<AppHealth, String> {
     state.get_app_health().await
-}
-
-fn canonicalize_path(path: &str) -> Result<PathBuf, String> {
-    let target = Path::new(path);
-    if !target.exists() {
-        return Err(format!("Path does not exist: {}", target.display()));
-    }
-
-    fs::canonicalize(target).map_err(|error| error.to_string())
 }

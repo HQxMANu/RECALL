@@ -1,4 +1,4 @@
-import type { AppHealth, IndexingStatus } from '../types/contracts'
+import type { AppHealth, AssetIssue, IndexingStatus } from '../types/contracts'
 import type { SearchScope } from './TopHeader'
 
 type StatusPanelProps = {
@@ -55,7 +55,7 @@ export function StatusPanel({ shellReady, status, health, scope }: StatusPanelPr
     : scope === 'documents'
       ? 'Document search is waiting for the local text embedding model to finish loading.'
       : scope === 'voice-notes'
-        ? 'Voice-note search is waiting for the local transcription and text embedding models to finish loading.'
+        ? 'Voice rec search is waiting for the local transcription and text embedding models to finish loading.'
         : 'Image search is waiting for the local vision model to finish loading.'
 
   return (
@@ -129,10 +129,25 @@ export function StatusPanel({ shellReady, status, health, scope }: StatusPanelPr
             value={formatRelativeTime(status.lastCompletedAt)}
             tone="neutral"
           />
+          <StatusRow
+            label="Asset issues"
+            value={status.issueCount ? status.issueCount.toLocaleString() : 'None'}
+            tone={status.issueCount ? 'error' : 'neutral'}
+          />
           {status.lastError ? (
             <StatusRow label="Last issue" value={status.lastError} tone="error" />
           ) : null}
         </div>
+        {status.recentIssues.length ? (
+          <div className="status-issues">
+            <p className="status-card__copy">Recent indexed asset issues</p>
+            <div className="status-issue-list">
+              {status.recentIssues.slice(0, 3).map((issue) => (
+                <AssetIssueRow key={issue.assetId} issue={issue} />
+              ))}
+            </div>
+          </div>
+        ) : null}
       </section>
 
       <section className="status-card">
@@ -167,6 +182,18 @@ export function StatusPanel({ shellReady, status, health, scope }: StatusPanelPr
         <p className="status-card__copy">{health.message}</p>
       </section>
     </aside>
+  )
+}
+
+function AssetIssueRow({ issue }: { issue: AssetIssue }) {
+  return (
+    <div className="status-issue-row">
+      <div>
+        <strong>{issue.filename}</strong>
+        <p>{issue.folderName ?? issue.path}</p>
+      </div>
+      <span>{issue.errorMessage}</span>
+    </div>
   )
 }
 

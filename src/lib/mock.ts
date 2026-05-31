@@ -182,6 +182,10 @@ export const mockApi = {
     mockFolders = mockFolders.filter((folder) => folder.id !== folderId)
   },
 
+  async rebuildIndex(folderIds?: number[]): Promise<void> {
+    void folderIds
+  },
+
   async getIndexingStatus(): Promise<IndexingStatus> {
     return {
       state: 'indexing',
@@ -192,6 +196,8 @@ export const mockApi = {
       queuedJobs: 1,
       lastCompletedAt: new Date(Date.now() - 1000 * 60 * 4).toISOString(),
       lastError: null,
+      issueCount: 0,
+      recentIssues: [],
     }
   },
 
@@ -220,9 +226,23 @@ export const mockApi = {
     }
   },
 
-  async openFileLocation(): Promise<void> {},
-  async openAssetFile(): Promise<void> {},
-  async copyAssetPath(): Promise<void> {},
+  async openFileLocation(assetId: number): Promise<void> {
+    void assetId
+  },
+  async openAssetFile(assetId: number): Promise<void> {
+    void assetId
+  },
+  async copyAssetPath(assetId: number): Promise<void> {
+    void assetId
+  },
+  async getAssetPreviewSource(
+    assetId: number,
+    variant: 'thumbnail' | 'preview',
+  ): Promise<string | null> {
+    void assetId
+    void variant
+    return null
+  },
 
   async getAppHealth(): Promise<AppHealth> {
     return {

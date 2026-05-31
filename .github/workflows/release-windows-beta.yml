@@ -1,0 +1,91 @@
+name: Release Windows Beta
+
+on:
+  workflow_dispatch:
+    inputs:
+      sign_artifacts:
+        description: Sign the NSIS installer and release executable
+        required: true
+        default: false
+        type: boolean
+
+jobs:
+  windows-beta:
+    runs-on: windows-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build output
+        uses: Swatinem/rust-cache@v2
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      - name: Create packaged worker virtualenv
+        working-directory: python
+        shell: pwsh
+        run: |
+          python -m venv .venv
+          .venv\Scripts\python.exe -m pip install --upgrade pip
+          .venv\Scripts\python.exe -m pip install -e ".[ml]"
+
+      - name: Run beta validation gates
+        run: npm run validate:release
+
+      - name: Build Windows beta installer
+        env:
+          RECALL_SKIP_RUNTIME_SMOKE: "1"
+        run: npm run build:tauri
+
+      - name: Sign beta artifacts
+        if: ${{ inputs.sign_artifacts }}
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_B64: ${{ secrets.WINDOWS_CERT_PFX_B64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          if (-not $env:WINDOWS_CERT_PFX_B64) { throw "Missing WINDOWS_CERT_PFX_B64 secret." }
+          if (-not $env:WINDOWS_CERT_PASSWORD) { throw "Missing WINDOWS_CERT_PASSWORD secret." }
+          $certPath = Join-Path $env:RUNNER_TEMP "recall-signing-cert.pfx"
+          [IO.File]::WriteAllBytes($certPath, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_B64))
+          $artifacts = @(
+            "src-tauri\target\release\recall.exe",
+            "src-tauri\target\release\bundle\nsis\Recall_0.1.0-beta.1_x64-setup.exe"
+          )
+          foreach ($artifact in $artifacts) {
+            if (-not (Test-Path $artifact)) {
+              throw "Expected artifact not found for signing: $artifact"
+            }
+            signtool sign `
+              /fd SHA256 `
+              /td SHA256 `
+              /tr http://timestamp.digicert.com `
+              /f $certPath `
+              /p $env:WINDOWS_CERT_PASSWORD `
+              $artifact
+          }
+
+      - name: Upload Windows beta artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: recall-windows-beta
+          path: |
+            src-tauri/target/release/recall.exe
+            src-tauri/target/release/bundle/nsis/Recall_0.1.0-beta.1_x64-setup.exe
+            src-tauri/resources/python-runtime-report.json

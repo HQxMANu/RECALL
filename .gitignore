@@ -19,6 +19,7 @@ python/build
 python/*.egg-info
 src-tauri/resources/
 src-tauri/target/
+output/
 __pycache__/
 *.py[cod]
 

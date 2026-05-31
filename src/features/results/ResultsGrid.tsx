@@ -1,7 +1,7 @@
-import { resolveImageSource } from '../../lib/tauri'
 import type { ThumbnailSize } from '../../app/App'
 import type { SearchResult } from '../../types/contracts'
 import { AssetPreviewArt } from '../assets/AssetPreviewArt'
+import { useAssetPreviewSource } from '../assets/useAssetPreviewSource'
 
 type ResultsGridProps = {
   coreSearchReady: boolean
@@ -40,6 +40,46 @@ function bodySnippet(result: SearchResult) {
 
 function showTitle(result: SearchResult) {
   return result.assetType !== 'image'
+}
+
+function ResultCard({
+  result,
+  onPreview,
+}: {
+  result: SearchResult
+  onPreview: (result: SearchResult) => void
+}) {
+  const imageSource = useAssetPreviewSource(result.assetId, 'thumbnail')
+
+  return (
+    <li>
+      <button
+        type="button"
+        className="result-card"
+        aria-label={`Open preview for ${result.filename}`}
+        onClick={() => onPreview(result)}
+      >
+        <div className="result-card__thumb">
+          {imageSource ? (
+            <img src={imageSource} alt={result.filename} loading="lazy" />
+          ) : (
+            <div className="result-card__thumb-fallback">
+              <AssetPreviewArt result={result} />
+            </div>
+          )}
+          <div className="result-card__scores">
+            <span className="score-chip">semantic {formatScore(result.semanticScore)}</span>
+            <span className="score-chip">text {formatScore(result.textScore)}</span>
+          </div>
+        </div>
+        <div className="result-card__body">
+          {showTitle(result) ? <strong>{result.filename}</strong> : null}
+          {secondaryText(result) ? <p>{secondaryText(result)}</p> : null}
+          {bodySnippet(result) ? <p>{bodySnippet(result)}</p> : null}
+        </div>
+      </button>
+    </li>
+  )
 }
 
 export function ResultsGrid({
@@ -107,47 +147,9 @@ export function ResultsGrid({
 
   return (
     <ul className="result-grid" data-size={thumbnailSize}>
-      {results.map((result) => {
-        const imageSource =
-          result.previewPath || result.thumbnailPath
-            ? resolveImageSource(
-                result.previewPath ??
-                  result.thumbnailPath ??
-                  (result.assetType === 'image' ? result.path : ''),
-              )
-            : result.assetType === 'image'
-              ? resolveImageSource(result.path)
-              : undefined
-        return (
-          <li key={result.assetId}>
-            <button
-              type="button"
-              className="result-card"
-              aria-label={`Open preview for ${result.filename}`}
-              onClick={() => onPreview(result)}
-            >
-              <div className="result-card__thumb">
-                {imageSource ? (
-                  <img src={imageSource} alt={result.filename} loading="lazy" />
-                ) : (
-                  <div className="result-card__thumb-fallback">
-                    <AssetPreviewArt result={result} />
-                  </div>
-                )}
-                <div className="result-card__scores">
-                  <span className="score-chip">semantic {formatScore(result.semanticScore)}</span>
-                  <span className="score-chip">text {formatScore(result.textScore)}</span>
-                </div>
-              </div>
-              <div className="result-card__body">
-                {showTitle(result) ? <strong>{result.filename}</strong> : null}
-                {secondaryText(result) ? <p>{secondaryText(result)}</p> : null}
-                {bodySnippet(result) ? <p>{bodySnippet(result)}</p> : null}
-              </div>
-            </button>
-          </li>
-        )
-      })}
+      {results.map((result) => (
+        <ResultCard key={result.assetId} result={result} onPreview={onPreview} />
+      ))}
     </ul>
   )
 }

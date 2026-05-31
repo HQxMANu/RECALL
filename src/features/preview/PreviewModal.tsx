@@ -1,14 +1,15 @@
-import { resolveImageSource } from '../../lib/tauri'
 import { useEffect } from 'react'
+
 import type { SearchResult } from '../../types/contracts'
 import { AssetPreviewArt } from '../assets/AssetPreviewArt'
+import { useAssetPreviewSource } from '../assets/useAssetPreviewSource'
 
 type PreviewModalProps = {
   result: SearchResult | null
   onClose: () => void
-  onOpenFile: (path: string) => Promise<void>
-  onOpenLocation: (path: string) => Promise<void>
-  onCopyPath: (path: string) => Promise<void>
+  onOpenFile: (assetId: number) => Promise<void>
+  onOpenLocation: (assetId: number) => Promise<void>
+  onCopyPath: (assetId: number) => Promise<void>
 }
 
 function formatDate(isoDate?: string | null) {
@@ -29,6 +30,8 @@ export function PreviewModal({
   onOpenLocation,
   onCopyPath,
 }: PreviewModalProps) {
+  const imageSource = useAssetPreviewSource(result?.assetId ?? null, 'preview')
+
   useEffect(() => {
     if (!result) {
       return
@@ -47,17 +50,6 @@ export function PreviewModal({
   if (!result) {
     return null
   }
-
-  const imageSource =
-    result.previewPath || result.thumbnailPath
-      ? resolveImageSource(
-          result.previewPath ??
-            result.thumbnailPath ??
-            (result.assetType === 'image' ? result.path : ''),
-        )
-      : result.assetType === 'image'
-        ? resolveImageSource(result.path)
-        : undefined
 
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -147,7 +139,7 @@ export function PreviewModal({
               <button
                 type="button"
                 className="button-primary"
-                onClick={() => onOpenFile(result.path)}
+                onClick={() => onOpenFile(result.assetId)}
               >
                 Open file
               </button>
@@ -155,14 +147,14 @@ export function PreviewModal({
             <button
               type="button"
               className={result.assetType === 'image' ? 'button-primary' : 'button-secondary'}
-              onClick={() => onOpenLocation(result.path)}
+              onClick={() => onOpenLocation(result.assetId)}
             >
               Open file location
             </button>
             <button
               type="button"
               className="button-secondary"
-              onClick={() => onCopyPath(result.path)}
+              onClick={() => onCopyPath(result.assetId)}
             >
               Copy file path
             </button>

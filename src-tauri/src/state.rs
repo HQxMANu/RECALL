@@ -117,6 +117,20 @@ impl AppState {
             .map_err(|error| error.to_string())
     }
 
+    pub fn resolve_asset_path(&self, asset_id: i64) -> Result<PathBuf, String> {
+        local_data::resolve_asset_path(&self.app_data_dir, asset_id)
+            .map_err(|error| error.to_string())
+    }
+
+    pub fn resolve_asset_preview_source(
+        &self,
+        asset_id: i64,
+        variant: &str,
+    ) -> Result<Option<String>, String> {
+        local_data::resolve_asset_preview_source(&self.app_data_dir, asset_id, variant)
+            .map_err(|error| error.to_string())
+    }
+
     pub async fn get_app_health(&self) -> Result<AppHealth, String> {
         if !self.worker.is_ready() {
             return Ok(self
@@ -477,6 +491,8 @@ mod tests {
             queued_jobs: 0,
             last_completed_at: None,
             last_error: None,
+            issue_count: 0,
+            recent_issues: Vec::new(),
         }
     }
 

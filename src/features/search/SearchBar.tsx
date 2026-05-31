@@ -42,9 +42,7 @@ export function SearchBar({
         value={query}
         disabled={disabled}
         onChange={(event) => onQueryChange(event.target.value)}
-        placeholder={
-          disabled ? disabledPlaceholder : enabledPlaceholder
-        }
+        placeholder={disabled ? disabledPlaceholder : enabledPlaceholder}
         aria-label={`Search indexed ${scope}`}
         autoFocus={!disabled}
       />

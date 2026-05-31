@@ -58,6 +58,8 @@ export function RecallApp() {
                 folders={app.folders}
                 activeFolderIds={app.activeFolderSet}
                 onAddFolders={app.addFolders}
+                onRebuildAll={app.rebuildAll}
+                onRebuildFolder={app.rebuildFolder}
                 onRemoveFolder={app.removeFolder}
                 onToggleFolder={app.toggleFolder}
               />

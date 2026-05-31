@@ -1,7 +1,7 @@
 {
   "name": "recall",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.0-beta.1",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -12,7 +12,10 @@
     "build:tauri": "tauri build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "typecheck": "tsc -b"
+    "typecheck": "tsc -b",
+    "test:python": "python -m unittest discover -s python/tests -t python",
+    "smoke:runtime": "python .\\scripts\\smoke_worker_runtime.py --runtime-root .\\src-tauri\\resources\\python",
+    "validate:release": "npm run lint && npm run build:runtime && npm run build && cargo check --manifest-path src-tauri/Cargo.toml && npm run test:python"
   },
   "dependencies": {
     "react": "^19.2.6",

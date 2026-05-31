@@ -13,6 +13,7 @@ class SearchServiceTests(unittest.TestCase):
         database.fetch_images_by_ids.return_value = {
             1: {
                 "id": 1,
+                "asset_id": 101,
                 "path": "one.png",
                 "filename": "one.png",
                 "modified_at_fs": "2026-05-14T12:00:00+00:00",
@@ -21,11 +22,13 @@ class SearchServiceTests(unittest.TestCase):
                 "folder_id": 1,
                 "folder_name": "Photos",
                 "thumbnail_path": None,
+                "asset_preview_path": None,
                 "width": 10,
                 "height": 10,
             },
             2: {
                 "id": 2,
+                "asset_id": 202,
                 "path": "two.png",
                 "filename": "two.png",
                 "modified_at_fs": "2026-05-14T12:00:00+00:00",
@@ -34,6 +37,7 @@ class SearchServiceTests(unittest.TestCase):
                 "folder_id": 2,
                 "folder_name": "Archive",
                 "thumbnail_path": None,
+                "asset_preview_path": None,
                 "width": 10,
                 "height": 10,
             },
@@ -57,6 +61,7 @@ class SearchServiceTests(unittest.TestCase):
 
         self.assertEqual(database.fetch_images_by_ids.call_count, 1)
         self.assertEqual([result["imageId"] for result in response["results"]], [1])
+        self.assertEqual([result["assetId"] for result in response["results"]], [101])
 
 
 if __name__ == "__main__":

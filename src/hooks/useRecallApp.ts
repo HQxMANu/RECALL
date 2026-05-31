@@ -11,12 +11,14 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import { isTauri } from '@tauri-apps/api/core'
 
 import {
+  clearAssetPreviewCache,
   copyAssetPath,
   getAppHealth,
   getIndexingStatus,
   listIndexedFolders,
   openAssetFile,
   openFileLocation,
+  rebuildIndex,
   removeIndexedFolder,
   searchAssets,
   selectFolders,
@@ -90,6 +92,8 @@ const initialStatus: IndexingStatus = {
   queuedJobs: 0,
   lastCompletedAt: null,
   lastError: null,
+  issueCount: 0,
+  recentIssues: [],
 }
 
 const initialHealth: AppHealth = {
@@ -193,6 +197,7 @@ export function useRecallApp(scope: SearchScope) {
 
   useEffect(() => {
     searchCache.current.clear()
+    clearAssetPreviewCache()
   }, [searchRefreshToken])
 
   const refreshShell = async () => {
@@ -442,6 +447,18 @@ export function useRecallApp(scope: SearchScope) {
     await refreshShell()
   }
 
+  const rebuildAll = async () => {
+    await rebuildIndex()
+    await refreshShell()
+    await refreshHealth()
+  }
+
+  const rebuildFolder = async (folderId: number) => {
+    await rebuildIndex([folderId])
+    await refreshShell()
+    await refreshHealth()
+  }
+
   const toggleFolder = (folderId: number) => {
     setSelectedFolderIds((current) =>
       current.includes(folderId)
@@ -476,6 +493,8 @@ export function useRecallApp(scope: SearchScope) {
     errorMessage,
     addFolders,
     removeFolder,
+    rebuildAll,
+    rebuildFolder,
     toggleFolder,
     clearFilters,
     previewResult,

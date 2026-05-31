@@ -1,4 +1,4 @@
-import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
+import { invoke, isTauri } from '@tauri-apps/api/core'
 
 import { mockApi } from './mock'
 import type {
@@ -11,6 +11,7 @@ import type {
 } from '../types/contracts'
 
 const api = isTauri() ? null : mockApi
+const assetPreviewCache = new Map<string, Promise<string | null> | string | null>()
 
 export async function selectFolders(): Promise<FolderSelectionResult> {
   if (api) {
@@ -36,6 +37,14 @@ export async function removeIndexedFolder(folderId: number): Promise<void> {
   return invoke('remove_indexed_folder', { folderId })
 }
 
+export async function rebuildIndex(folderIds?: number[]): Promise<void> {
+  if (api) {
+    return api.rebuildIndex(folderIds)
+  }
+
+  return invoke('rebuild_index', { folderIds })
+}
+
 export async function getIndexingStatus(): Promise<IndexingStatus> {
   if (api) {
     return api.getIndexingStatus()
@@ -52,28 +61,28 @@ export async function searchAssets(request: SearchRequest): Promise<SearchRespon
   return invoke<SearchResponse>('search_assets', { request })
 }
 
-export async function openFileLocation(path: string): Promise<void> {
+export async function openFileLocation(assetId: number): Promise<void> {
   if (api) {
-    return api.openFileLocation()
+    return api.openFileLocation(assetId)
   }
 
-  return invoke('open_file_location', { path })
+  return invoke('open_file_location', { assetId })
 }
 
-export async function openAssetFile(path: string): Promise<void> {
+export async function openAssetFile(assetId: number): Promise<void> {
   if (api) {
-    return api.openAssetFile()
+    return api.openAssetFile(assetId)
   }
 
-  return invoke('open_asset_file', { path })
+  return invoke('open_asset_file', { assetId })
 }
 
-export async function copyAssetPath(path: string): Promise<void> {
+export async function copyAssetPath(assetId: number): Promise<void> {
   if (api) {
-    return api.copyAssetPath()
+    return api.copyAssetPath(assetId)
   }
 
-  return invoke('copy_asset_path', { path })
+  return invoke('copy_asset_path', { assetId })
 }
 
 export async function getAppHealth(): Promise<AppHealth> {
@@ -84,18 +93,36 @@ export async function getAppHealth(): Promise<AppHealth> {
   return invoke<AppHealth>('get_app_health')
 }
 
-export function resolveImageSource(path?: string | null): string | undefined {
-  if (!path) {
-    return undefined
+export async function getAssetPreviewSource(
+  assetId: number,
+  variant: 'thumbnail' | 'preview',
+): Promise<string | null> {
+  const cacheKey = `${assetId}:${variant}`
+  const cached = assetPreviewCache.get(cacheKey)
+  if (cached instanceof Promise) {
+    return cached
+  }
+  if (typeof cached === 'string' || cached === null) {
+    return cached
   }
 
-  if (path.startsWith('data:') || path.startsWith('http')) {
-    return path
-  }
+  const nextRequest = (api
+    ? api.getAssetPreviewSource(assetId, variant)
+    : invoke<string | null>('resolve_asset_preview_source', { assetId, variant })
+  )
+    .then((source) => {
+      assetPreviewCache.set(cacheKey, source)
+      return source
+    })
+    .catch((error) => {
+      assetPreviewCache.delete(cacheKey)
+      throw error
+    })
 
-  if (api) {
-    return undefined
-  }
+  assetPreviewCache.set(cacheKey, nextRequest)
+  return nextRequest
+}
 
-  return convertFileSrc(path)
+export function clearAssetPreviewCache() {
+  assetPreviewCache.clear()
 }

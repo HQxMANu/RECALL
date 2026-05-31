@@ -87,7 +87,8 @@ class SearchService:
             image_id: {
                 **dict(row),
                 "asset_type": "image",
-                "preview_path": row["thumbnail_path"],
+                "asset_id": int(row["asset_id"]),
+                "preview_path": row["asset_preview_path"] or row["thumbnail_path"],
                 "snippet": (row["ocr_text"] or "")[:280] or None,
             }
             for image_id, row in metadata_rows.items()

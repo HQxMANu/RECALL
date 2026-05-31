@@ -1,10 +1,24 @@
-use std::{path::Path, time::Instant};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    time::Instant,
+};
 
-use anyhow::Context;
-use rusqlite::{params_from_iter, types::Value, Connection, OptionalExtension};
+use anyhow::{anyhow, Context};
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension};
 use serde_json::json;
 
-use crate::models::{IndexedFolder, IndexingStatus, SearchRequest, SearchResponse, SearchResult};
+use crate::models::{
+    AssetIssue, IndexedFolder, IndexingStatus, SearchRequest, SearchResponse, SearchResult,
+};
+
+#[derive(Debug)]
+struct AssetRecord {
+    path: String,
+    asset_type: String,
+    preview_path: Option<String>,
+}
 
 fn open_database(app_data_dir: &Path) -> anyhow::Result<Option<Connection>> {
     let database_path = app_data_dir.join("recall.db");
@@ -74,6 +88,9 @@ pub fn read_indexing_status(app_data_dir: &Path) -> anyhow::Result<IndexingStatu
     "#,
     )?;
 
+    let recent_issues = recent_asset_issues(&connection)?;
+    let issue_count = asset_issue_count(&connection)?;
+
     let Some(row) = statement
         .query_row([], |row| {
             Ok((
@@ -88,7 +105,10 @@ pub fn read_indexing_status(app_data_dir: &Path) -> anyhow::Result<IndexingStatu
         })
         .optional()?
     else {
-        return Ok(idle_status());
+        let mut status = idle_status();
+        status.issue_count = issue_count;
+        status.recent_issues = recent_issues;
+        return Ok(status);
     };
 
     let state = match row.2.as_str() {
@@ -106,6 +126,8 @@ pub fn read_indexing_status(app_data_dir: &Path) -> anyhow::Result<IndexingStatu
         queued_jobs: 0,
         last_completed_at: row.5,
         last_error: row.6,
+        issue_count,
+        recent_issues,
     })
 }
 
@@ -202,6 +224,151 @@ pub fn search_recent_assets(
     })
 }
 
+pub fn resolve_asset_path(app_data_dir: &Path, asset_id: i64) -> anyhow::Result<PathBuf> {
+    let asset = load_asset_record(app_data_dir, asset_id)?;
+    canonicalize_existing_path(&asset.path)
+}
+
+pub fn resolve_asset_preview_source(
+    app_data_dir: &Path,
+    asset_id: i64,
+    variant: &str,
+) -> anyhow::Result<Option<String>> {
+    let asset = load_asset_record(app_data_dir, asset_id)?;
+    let preview_candidate = asset
+        .preview_path
+        .as_deref()
+        .filter(|path| !path.trim().is_empty())
+        .map(canonicalize_existing_path)
+        .transpose()?;
+
+    let asset_path = canonicalize_existing_path(&asset.path)?;
+    let selected_path = match variant {
+        "thumbnail" => preview_candidate
+            .or_else(|| (asset.asset_type == "image").then_some(asset_path.clone())),
+        "preview" => {
+            if asset.asset_type == "image" {
+                Some(asset_path.clone())
+            } else {
+                preview_candidate
+            }
+        }
+        other => return Err(anyhow!("Unsupported preview variant: {other}")),
+    };
+
+    selected_path
+        .map(read_data_url)
+        .transpose()
+        .with_context(|| format!("Failed to prepare {variant} preview for asset {asset_id}"))
+}
+
+fn recent_asset_issues(connection: &Connection) -> anyhow::Result<Vec<AssetIssue>> {
+    let mut statement = connection.prepare(
+        r#"
+    SELECT a.id, a.asset_type, a.filename, a.path, a.folder_id, f.display_name AS folder_name,
+           COALESCE(a.error_message, 'Indexing failed without a detailed error message.') AS error_message,
+           a.last_indexed_at
+    FROM indexed_assets a
+    JOIN indexed_folders f ON f.id = a.folder_id
+    WHERE a.index_status = 'error' OR (a.error_message IS NOT NULL AND a.error_message != '')
+    ORDER BY COALESCE(a.last_indexed_at, a.modified_at_fs) DESC, a.id DESC
+    LIMIT 5
+    "#,
+    )?;
+
+    let rows = statement.query_map([], |row| {
+        Ok(AssetIssue {
+            asset_id: row.get("id")?,
+            asset_type: row.get("asset_type")?,
+            filename: row.get("filename")?,
+            path: row.get("path")?,
+            folder_id: row.get("folder_id")?,
+            folder_name: row.get("folder_name")?,
+            error_message: row.get("error_message")?,
+            last_indexed_at: row.get("last_indexed_at")?,
+        })
+    })?;
+
+    rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+}
+
+fn asset_issue_count(connection: &Connection) -> anyhow::Result<u64> {
+    let count = connection.query_row(
+        r#"
+        SELECT COUNT(*)
+        FROM indexed_assets
+        WHERE index_status = 'error' OR (error_message IS NOT NULL AND error_message != '')
+        "#,
+        [],
+        |row| row.get::<_, i64>(0),
+    )?;
+
+    Ok(count.max(0) as u64)
+}
+
+fn load_asset_record(app_data_dir: &Path, asset_id: i64) -> anyhow::Result<AssetRecord> {
+    let Some(connection) = open_database(app_data_dir)? else {
+        return Err(anyhow!(
+            "Recall has not created its local database yet, so asset {asset_id} is unavailable."
+        ));
+    };
+
+    connection
+        .query_row(
+            r#"
+            SELECT path, asset_type, preview_path
+            FROM indexed_assets
+            WHERE id = ?
+            "#,
+            params![asset_id],
+            |row| {
+                Ok(AssetRecord {
+                    path: row.get("path")?,
+                    asset_type: row.get("asset_type")?,
+                    preview_path: row.get("preview_path")?,
+                })
+            },
+        )
+        .optional()?
+        .ok_or_else(|| anyhow!("Could not find asset {asset_id} in the local index."))
+}
+
+fn canonicalize_existing_path(path: &str) -> anyhow::Result<PathBuf> {
+    let candidate = Path::new(path);
+    if !candidate.exists() {
+        return Err(anyhow!("Path does not exist: {}", candidate.display()));
+    }
+
+    fs::canonicalize(candidate)
+        .with_context(|| format!("Failed to resolve {}", candidate.display()))
+}
+
+fn read_data_url(path: PathBuf) -> anyhow::Result<String> {
+    let bytes = fs::read(&path).with_context(|| format!("Failed to read {}", path.display()))?;
+    let mime_type = guess_mime_type(&path);
+    Ok(format!(
+        "data:{mime_type};base64,{}",
+        BASE64_STANDARD.encode(bytes)
+    ))
+}
+
+fn guess_mime_type(path: &Path) -> &'static str {
+    match path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(|extension| extension.to_ascii_lowercase())
+        .as_deref()
+    {
+        Some("png") => "image/png",
+        Some("jpg") | Some("jpeg") => "image/jpeg",
+        Some("webp") => "image/webp",
+        Some("gif") => "image/gif",
+        Some("bmp") => "image/bmp",
+        Some("svg") => "image/svg+xml",
+        _ => "application/octet-stream",
+    }
+}
+
 fn idle_status() -> IndexingStatus {
     IndexingStatus {
         state: "idle".to_string(),
@@ -212,5 +379,7 @@ fn idle_status() -> IndexingStatus {
         queued_jobs: 0,
         last_completed_at: None,
         last_error: None,
+        issue_count: 0,
+        recent_issues: Vec::new(),
     }
 }

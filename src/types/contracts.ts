@@ -52,6 +52,17 @@ export type SearchResponse = {
   queryDebug: Record<string, number | string | boolean | null>
 }
 
+export type AssetIssue = {
+  assetId: number
+  assetType: 'image' | 'document' | 'voice-note'
+  filename: string
+  path: string
+  folderId: number
+  folderName?: string | null
+  errorMessage: string
+  lastIndexedAt?: string | null
+}
+
 export type IndexingStatus = {
   state: 'idle' | 'indexing' | 'error'
   activeJobId?: number | null
@@ -61,6 +72,8 @@ export type IndexingStatus = {
   queuedJobs: number
   lastCompletedAt?: string | null
   lastError?: string | null
+  issueCount: number
+  recentIssues: AssetIssue[]
 }
 
 export type AppHealth = {

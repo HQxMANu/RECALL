@@ -70,6 +70,19 @@ pub struct SearchResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct AssetIssue {
+    pub asset_id: i64,
+    pub asset_type: String,
+    pub filename: String,
+    pub path: String,
+    pub folder_id: i64,
+    pub folder_name: Option<String>,
+    pub error_message: String,
+    pub last_indexed_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct IndexingStatus {
     pub state: String,
     pub active_job_id: Option<i64>,
@@ -79,6 +92,8 @@ pub struct IndexingStatus {
     pub queued_jobs: u64,
     pub last_completed_at: Option<String>,
     pub last_error: Option<String>,
+    pub issue_count: u64,
+    pub recent_issues: Vec<AssetIssue>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

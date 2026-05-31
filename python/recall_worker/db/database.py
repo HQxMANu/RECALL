@@ -732,8 +732,9 @@ class Database:
         with self._lock:
             rows = self._connection.execute(
                 f"""
-                SELECT i.*, f.display_name AS folder_name
+                SELECT i.*, a.id AS asset_id, a.preview_path AS asset_preview_path, f.display_name AS folder_name
                 FROM indexed_images i
+                JOIN indexed_assets a ON a.path = i.path AND a.asset_type = 'image'
                 JOIN indexed_folders f ON f.id = i.folder_id
                 WHERE i.id IN ({placeholders})
                 """,

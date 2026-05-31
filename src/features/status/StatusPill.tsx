@@ -21,7 +21,7 @@ export function StatusPill({ health, status, scope }: StatusPillProps) {
         : scope === 'documents'
           ? 'Document search warming'
           : scope === 'voice-notes'
-            ? 'Voice-note search warming'
+            ? 'Voice rec search warming'
             : 'Image search warming'
       : status.state === 'indexing'
       ? `${status.itemsProcessed.toLocaleString()} / ${status.itemsTotal.toLocaleString()} indexed`
