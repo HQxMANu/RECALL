@@ -1,8 +1,8 @@
-# Recall Windows Beta Release Checklist
+# Recall GitHub-First Release Checklist
 
-Use this checklist before publishing a new Windows beta installer.
+Use this checklist before publishing a new open-source release of Recall.
 
-## Automated gates
+## Automated Gates
 
 Run from the repository root:
 
@@ -18,50 +18,61 @@ This covers:
 - `cargo check --manifest-path src-tauri/Cargo.toml`
 - `python -m unittest discover -s python/tests -t python`
 
-## Manual Windows 11 publish checks
+## Required Release Checks
 
-1. Build a fresh installer:
+1. Confirm the clone-and-run workflow still works:
+
+```powershell
+npm install
+cd python
+python -m venv .venv
+.venv\Scripts\Activate.ps1
+pip install --upgrade pip
+pip install -e ".[ml]"
+cd ..
+npm run prepare:models
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-tauri.ps1
+```
+
+2. Confirm offline core search behavior:
+
+- `python\models` exists after `npm run prepare:models`
+- staged runtime smoke still passes
+- core search reaches ready without depending on remote model downloads
+
+3. Confirm packaged runtime integrity:
+
+- no `__editable__*` artifacts remain in the staged runtime
+- no absolute local developer paths remain in staged runtime metadata
+- packaged worker boot passes from `src-tauri\resources\python`
+
+4. Confirm startup and search behavior:
+
+- shell appears cleanly
+- core search reaches ready
+- image/document/voice-rec search still work
+- OCR and transcription remain deferred until indexing needs them
+
+## Optional Binary Release Checks
+
+If you publish convenience binaries on GitHub Releases:
+
+1. Build a fresh portable package:
 
 ```powershell
 npm run build:tauri
 ```
 
-2. Install the fresh NSIS package from:
+2. Verify the produced artifacts exist:
 
-- `src-tauri/target/release/bundle/nsis/Recall_0.1.0-beta.1_x64-setup.exe`
+- `src-tauri\target\release\recall.exe`
+- `src-tauri\target\release\portable\Recall`
+- `src-tauri\target\release\portable\Recall_0.1.0-beta.1_portable-win64.zip`
 
-3. Confirm startup and shell behavior:
+3. Attach checksums and release notes.
 
-- Shell appears cleanly
-- Core search reaches ready state
-- Indexing/OCR remains deferred until indexing work starts
+4. State clearly in the release notes that the Windows artifacts may be unsigned and may show an unknown publisher warning.
 
-4. Confirm startup reconcile and live indexing:
+## Future Enhancement
 
-- Images appear after startup reconcile
-- Documents appear after startup reconcile
-- `Voice rec` appears after startup reconcile
-- Adding `.m4a`, `.docx`, `.pdf`, and image files while Recall is open works
-- Adding the same file types while Recall is closed works after relaunch
-- Moving files between indexed folders keeps them searchable
-
-5. Confirm preview and file actions:
-
-- Image previews render inside Recall
-- Preview rendering works without arbitrary local-file URLs
-- `Open file`
-- `Open file location`
-- `Copy file path`
-
-6. Confirm installer hygiene:
-
-- Install succeeds on a clean Windows 11 machine
-- Uninstall removes the app cleanly
-- Signed installer passes the intended SmartScreen expectations
-
-## Release policy for `0.1.0-beta.1`
-
-- Windows-only beta
-- NSIS installer only
-- Bundled Python worker runtime
-- No cloud fallback in the runtime path
+Code signing is recommended for broader non-technical Windows distribution, but it is not a current blocker for the GitHub-first open-source release posture.

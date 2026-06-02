@@ -15,11 +15,13 @@ tmp
 .venv
 .recall-data
 python\.venv
+python/models
 python/build
 python/*.egg-info
 src-tauri/resources/
 src-tauri/target/
 output/
+tmp-dev-tauri*.log
 __pycache__/
 *.py[cod]
 

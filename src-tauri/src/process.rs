@@ -50,6 +50,7 @@ impl WorkerClient {
         }
 
         let mut command = Command::new(&python);
+        let model_root = worker_root.join("python").join("models");
         command
             .arg(&worker_script)
             .current_dir(worker_root)
@@ -57,11 +58,17 @@ impl WorkerClient {
             .env("RECALL_APP_DATA_DIR", app_data_dir)
             .env("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
             .env("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
+            .env("HF_HUB_OFFLINE", "1")
+            .env("TRANSFORMERS_OFFLINE", "1")
             .env("USE_TF", "0")
             .env("TRANSFORMERS_NO_TF", "1")
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+
+        if model_root.exists() {
+            command.env("RECALL_MODEL_ROOT", model_root);
+        }
 
         info!(
             "Starting Recall worker from {} with Python {}",

@@ -2,14 +2,27 @@
   "name": "recall",
   "private": true,
   "version": "0.1.0-beta.1",
+  "description": "Windows-first local-first desktop search for screenshots, documents, and voice recordings.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/HQxMANu/RECALL.git"
+  },
+  "bugs": {
+    "url": "https://github.com/HQxMANu/RECALL/issues"
+  },
+  "homepage": "https://github.com/HQxMANu/RECALL",
   "type": "module",
   "scripts": {
     "dev": "vite",
     "dev:tauri": "tauri dev",
+    "prepare:models": "python .\\scripts\\prepare_local_models.py --model-root .\\python\\models",
     "build:runtime": "powershell -ExecutionPolicy Bypass -File .\\scripts\\prepare-worker-runtime.ps1",
     "build:desktop": "npm run build:runtime && npm run build",
     "build": "tsc -b && vite build",
-    "build:tauri": "tauri build",
+    "package:portable": "powershell -ExecutionPolicy Bypass -File .\\scripts\\package-portable.ps1",
+    "build:portable": "npm run build:desktop && cargo build --manifest-path src-tauri/Cargo.toml --release && npm run package:portable",
+    "build:tauri": "npm run build:portable",
     "lint": "eslint .",
     "preview": "vite preview",
     "typecheck": "tsc -b",
@@ -18,6 +31,7 @@
     "validate:release": "npm run lint && npm run build:runtime && npm run build && cargo check --manifest-path src-tauri/Cargo.toml && npm run test:python"
   },
   "dependencies": {
+    "@tauri-apps/api": "^2.11.0",
     "react": "^19.2.6",
     "react-dom": "^19.2.6"
   },

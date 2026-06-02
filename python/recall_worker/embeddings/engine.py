@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -10,6 +11,8 @@ from PIL import Image
 
 
 TOKEN_RE = re.compile(r"[a-z0-9]{2,}")
+OPENCLIP_MODEL_DIR = Path("openclip") / "ViT-B-32"
+BGE_MODEL_DIR = Path("bge-small-en-v1.5")
 
 
 @dataclass(slots=True)
@@ -69,27 +72,15 @@ class OpenClipImageEmbedder(BaseImageEmbedder):
     checkpoint_name = "open_clip_model.safetensors"
 
     def __init__(self) -> None:
-        from huggingface_hub import hf_hub_download  # type: ignore
         import open_clip  # type: ignore
         import torch  # type: ignore
 
         self._torch = torch
         self._device = "cpu"
-        try:
-            checkpoint_path = hf_hub_download(
-                repo_id=self.repo_id,
-                filename=self.checkpoint_name,
-                local_files_only=True,
-            )
-        except Exception:
-            checkpoint_path = hf_hub_download(
-                repo_id=self.repo_id,
-                filename=self.checkpoint_name,
-                local_files_only=False,
-            )
+        checkpoint_path = resolve_openclip_checkpoint(self.checkpoint_name)
         self._model, _, self._preprocess = open_clip.create_model_and_transforms(
             self.model_name,
-            pretrained=checkpoint_path,
+            pretrained=str(checkpoint_path),
             device=self._device,
         )
         self._tokenizer = open_clip.get_tokenizer(self.model_name)
@@ -132,12 +123,9 @@ class BgeSmallTextEmbedder(HashFallbackEmbedder):
         from transformers import AutoModel, AutoTokenizer  # type: ignore
 
         self._torch = torch
-        try:
-            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name, local_files_only=True)
-            self._model = AutoModel.from_pretrained(self.model_name, local_files_only=True)
-        except Exception:
-            self._tokenizer = AutoTokenizer.from_pretrained(self.model_name, local_files_only=False)
-            self._model = AutoModel.from_pretrained(self.model_name, local_files_only=False)
+        model_dir = resolve_bge_model_dir()
+        self._tokenizer = AutoTokenizer.from_pretrained(str(model_dir), local_files_only=True)
+        self._model = AutoModel.from_pretrained(str(model_dir), local_files_only=True)
         self._model.eval()
         self.dimension = int(getattr(self._model.config, "hidden_size", 384))
 
@@ -183,3 +171,56 @@ def create_text_embedder() -> HashFallbackEmbedder:
 
 
 BaseEmbedder = BaseImageEmbedder
+
+
+def resolve_model_root() -> Path:
+    explicit = os.environ.get("RECALL_MODEL_ROOT", "").strip()
+    if explicit:
+        candidate = Path(explicit).expanduser().resolve()
+        if candidate.exists():
+            return candidate
+
+    candidates = [
+        Path(__file__).resolve().parents[2] / "models",
+        Path.cwd() / "python" / "models",
+        Path.cwd() / "models",
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            return candidate.resolve()
+
+    raise FileNotFoundError(
+        "Recall local model assets were not found. Run `npm run prepare:models` before starting Recall."
+    )
+
+
+def resolve_openclip_checkpoint(checkpoint_name: str) -> Path:
+    explicit = os.environ.get("RECALL_OPENCLIP_CHECKPOINT", "").strip()
+    if explicit:
+        candidate = Path(explicit).expanduser().resolve()
+        if candidate.exists():
+            return candidate
+        raise FileNotFoundError(f"Configured RECALL_OPENCLIP_CHECKPOINT was not found: {candidate}")
+
+    candidate = resolve_model_root() / OPENCLIP_MODEL_DIR / checkpoint_name
+    if candidate.exists():
+        return candidate
+    raise FileNotFoundError(
+        f"Recall OpenCLIP checkpoint is missing at {candidate}. Run `npm run prepare:models` first."
+    )
+
+
+def resolve_bge_model_dir() -> Path:
+    explicit = os.environ.get("RECALL_BGE_MODEL_DIR", "").strip()
+    if explicit:
+        candidate = Path(explicit).expanduser().resolve()
+        if candidate.exists():
+            return candidate
+        raise FileNotFoundError(f"Configured RECALL_BGE_MODEL_DIR was not found: {candidate}")
+
+    candidate = resolve_model_root() / BGE_MODEL_DIR
+    if candidate.exists():
+        return candidate
+    raise FileNotFoundError(
+        f"Recall text model assets are missing at {candidate}. Run `npm run prepare:models` first."
+    )

@@ -19,6 +19,7 @@ from recall_worker.search.vector_index import create_vector_index
 from recall_worker.transcription.engine import create_transcription_engine
 
 create_embedder = create_image_embedder
+_REAL_THREAD_CLASS = threading.Thread
 
 
 @dataclass(slots=True)
@@ -48,11 +49,24 @@ class RecallWorker:
         self.transcription_engine = create_transcription_engine()
 
         image_embedding_started = time.perf_counter()
-        self.image_embedder = create_image_embedder()
-        image_embedding_init_ms = round((time.perf_counter() - image_embedding_started) * 1000)
-
         text_embedding_started = time.perf_counter()
-        self.text_embedder = create_text_embedder()
+        image_thread, image_result, image_error = _spawn_embedder_initializer(
+            create_image_embedder,
+            "recall-image-embedder-init",
+        )
+        text_thread, text_result, text_error = _spawn_embedder_initializer(
+            create_text_embedder,
+            "recall-text-embedder-init",
+        )
+        image_thread.join()
+        text_thread.join()
+        if "error" in image_error:
+            raise image_error["error"]
+        if "error" in text_error:
+            raise text_error["error"]
+        self.image_embedder = image_result["value"]
+        image_embedding_init_ms = round((time.perf_counter() - image_embedding_started) * 1000)
+        self.text_embedder = text_result["value"]
         text_embedding_init_ms = round((time.perf_counter() - text_embedding_started) * 1000)
 
         image_vector_started = time.perf_counter()
@@ -643,3 +657,18 @@ def main() -> None:
 
         sys.stdout.write(json.dumps(response) + "\n")
         sys.stdout.flush()
+
+
+def _spawn_embedder_initializer(factory, thread_name: str):
+    result: dict[str, object] = {}
+    error: dict[str, BaseException] = {}
+
+    def run() -> None:
+        try:
+            result["value"] = factory()
+        except BaseException as exc:  # noqa: BLE001
+            error["error"] = exc
+
+    thread = _REAL_THREAD_CLASS(target=run, daemon=True, name=thread_name)
+    thread.start()
+    return thread, result, error

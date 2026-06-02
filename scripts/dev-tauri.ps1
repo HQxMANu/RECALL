@@ -31,6 +31,11 @@ if (Test-Path $venvPython) {
   $env:RECALL_PYTHON_EXE = $venvPython
 }
 
+$modelRoot = Join-Path $projectRoot "python\models"
+if (Test-Path $modelRoot) {
+  $env:RECALL_MODEL_ROOT = $modelRoot
+}
+
 Push-Location $projectRoot
 try {
   npm run dev:tauri

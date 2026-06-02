@@ -2,9 +2,9 @@
 name = "recall"
 version = "0.1.0-beta.1"
 description = "Recall local-first screenshot and image search"
-authors = ["OpenAI Codex"]
+authors = ["Emmanuel Delgado"]
 license = "MIT"
-repository = ""
+repository = "https://github.com/HQxMANu/RECALL"
 edition = "2021"
 rust-version = "1.77.2"
 

@@ -82,9 +82,11 @@ class FakeVectorIndex:
 
 
 class FakeThread:
-    def __init__(self, target=None, daemon=None, name=None) -> None:
+    def __init__(self, target=None, daemon=None, name=None, args=None, kwargs=None, **_extras) -> None:
         del daemon, name
         self.target = target
+        self.args = args or ()
+        self.kwargs = kwargs or {}
 
     def start(self) -> None:
         return None

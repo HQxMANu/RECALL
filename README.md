@@ -1,114 +1,169 @@
 # Recall
 
-Recall is a Windows-first, local-first desktop search app for screenshots and images. It lets you search your visual history in plain English using on-device OCR, embeddings, thumbnails, and hybrid ranking.
+Recall is a Windows-first, local-first desktop search app for screenshots, images, documents, and voice recordings. It uses on-device OCR, embeddings, thumbnails, and hybrid ranking so you can search your local history in plain English without sending files to the cloud.
 
-## Why Recall
+## Release Posture
 
-- Search screenshots like a private desktop copilot
-- Keep indexing, OCR, and semantic search on your machine
-- Blend text matches, OCR snippets, semantic similarity, and recency into one result list
-- Open results fast without uploading your image library anywhere
+Recall is currently distributed **GitHub-first**:
 
-## Product snapshot
+- the repository is the primary public release surface
+- you can clone it, install the dependencies, and run it locally
+- optional prebuilt Windows binaries may be published on GitHub Releases for convenience
+- no Microsoft Store dependency
+- no code-signing requirement for the initial open-source launch
+
+If optional Windows binaries are provided, Windows may show an **unsigned / unknown publisher** warning. That is expected for the current release posture.
+
+## Product Snapshot
 
 - `Tauri` desktop shell
 - `React + TypeScript` UI
-- `Rust` host for native desktop integration
+- `Rust` host for desktop integration and worker orchestration
 - `Python` worker for indexing and search
-- `SQLite + FTS5` for metadata and text search
-- `FAISS` for vector search with local fallback paths
+- `SQLite + FTS5` for metadata and text retrieval
+- `FAISS` for local vector search
 
-## What it does today
+## What Recall Does Today
 
-- Index local folders of screenshots and images
-- Extract OCR text for searchable content
-- Generate embeddings for description-based image search
-- Store metadata, OCR text, embeddings, and thumbnails locally
-- Run hybrid ranking across text search and semantic search
-- Track indexing jobs and filesystem changes
-- Show search readiness, indexing progress, and local engine state in the UI
-- Support preview, open location, and copy path actions
+- indexes local folders recursively
+- extracts OCR text from indexed visuals
+- builds embeddings for description-based search
+- stores metadata, OCR text, thumbnails, and search state locally
+- supports image, document, and voice-rec search scopes
+- keeps OCR and transcription deferred until indexing actually needs them
 
-## Architecture
-
-Recall uses a local three-part architecture:
-
-1. `React + Tauri UI`
-2. `Rust desktop host`
-3. `Python indexing and search worker`
-
-More detail:
-
-- [Architecture notes](docs/architecture.md)
-- [SQLite schema](docs/schema.md)
-- [Ranking notes](docs/ranking.md)
-- [Windows beta release checklist](docs/release-checklist.md)
-
-## Local-first design
-
-- No cloud inference in the runtime path
-- No telemetry pipeline in the current app runtime
-- Data stays in local app storage
-- OCR and indexing services are deferred until they are actually needed
-- Core search readiness is treated separately from shell readiness
-
-## Current status
-
-Recall is being prepared for a Windows-only public beta release. The repository is Windows-first and the first supported installer target is NSIS.
-
-## Run locally
+## Quickstart
 
 ### Requirements
 
-- Node.js
-- Python 3.11+
+- Windows 11 recommended
+- Node.js 22+
+- Python 3.11
 - Rust toolchain
 - Visual Studio Build Tools with the C++ workload on Windows
 
-### Install
+### Clone And Run From Source
 
 ```powershell
+git clone https://github.com/HQxMANu/RECALL.git
+cd RECALL
 npm install
 cd python
 python -m venv .venv
 .venv\Scripts\Activate.ps1
-pip install -e .
-pip install ".[ml]"
+pip install --upgrade pip
+pip install -e ".[ml]"
 cd ..
+npm run prepare:models
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-tauri.ps1
 ```
 
-### Development
+That path is best for contributors and technical users who want the live dev workflow.
 
-```powershell
-npm run dev:tauri
-```
-
-### Packaged build
+### Local Packaged Build
 
 ```powershell
 npm run build:tauri
 ```
 
-### Public beta target
+This builds a portable Windows package:
 
-- Windows 11 first
-- NSIS installer only for `0.1.0-beta.1`
-- Bundled local Python worker runtime
-- No cloud fallback in the runtime path
+- the release executable at `src-tauri\target\release\recall.exe`
+- the portable folder at `src-tauri\target\release\portable\Recall`
+- the portable zip at `src-tauri\target\release\portable\Recall_0.1.0-beta.1_portable-win64.zip`
+
+### Optional Binary Download
+
+If a GitHub Release includes Windows binaries:
+
+1. download the latest portable zip or unpacked portable folder
+2. keep the bundled `python` folder next to `recall.exe` if you use the portable build
+3. expect Windows to warn that the publisher is unknown if the artifact is unsigned
+4. review the release notes and checksums before running the file
+
+The repo is still the source of truth even when convenience binaries are published.
+
+## Documentation And Support
+
+- [Privacy and local data handling](PRIVACY.md)
+- [Security reporting](SECURITY.md)
+- [Contribution guide](CONTRIBUTING.md)
+- [Changelog](CHANGELOG.md)
+- [Third-party notices](THIRD_PARTY_NOTICES.md)
+
+Bug reports and support requests should go through GitHub Issues on the main repository.
+
+## Local Model Preparation
+
+Core semantic search is intentionally **offline/local-only** at runtime. Recall no longer downloads its core search models on startup.
+
+Prepare the local model assets once with:
+
+```powershell
+npm run prepare:models
+```
+
+This downloads the required local assets into `python\models`.
+
+More detail:
+
+- [Local model setup and offline behavior](docs/local-models.md)
+
+## Recommended Developer Workflow
+
+- use `powershell -ExecutionPolicy Bypass -File .\scripts\dev-tauri.ps1` for daily development
+- use `npm run build:tauri` when you want to test the packaged build
+- avoid opening `src-tauri\target\debug\recall.exe` directly unless the dev server is already running
 
 ## Validation
 
-- Frontend typecheck: `npm run typecheck`
-- Frontend lint: `npm run lint`
+- frontend lint: `npm run lint`
+- frontend build: `npm run build`
 - Python tests: `python -m unittest discover -s python/tests -t python`
-- Packaged worker smoke check: `npm run smoke:runtime`
-- Full beta gate: `npm run validate:release`
+- staged runtime smoke test: `npm run smoke:runtime`
+- release validation gate: `npm run validate:release`
 
-## Notes
+## Architecture Notes
 
-- This repository currently includes a Python ML stack, so local build artifacts can get large during development.
-- The packaged runtime is pruned for distribution, but the development workspace is still heavier than a typical CRUD desktop app.
-- The release path is currently scoped to Windows-only beta validation before broader platform or installer support is attempted.
+- [Architecture notes](docs/architecture.md)
+- [SQLite schema](docs/schema.md)
+- [Ranking notes](docs/ranking.md)
+- [GitHub-first release checklist](docs/release-checklist.md)
+
+## Troubleshooting
+
+### `localhost refused to connect`
+
+You probably opened the debug executable directly. Start Recall in development mode with:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\dev-tauri.ps1
+```
+
+### Core search never becomes ready
+
+- make sure `npm run prepare:models` completed successfully
+- verify `python\models` exists
+- if you are testing a packaged runtime, rebuild it after changing the worker or model setup
+
+### Windows build tools errors
+
+Install Visual Studio Build Tools with the C++ workload, then rerun the provided PowerShell launcher.
+
+### Large workspace / build size
+
+Recall ships a local ML stack, so the Python worker runtime is heavier than a typical desktop CRUD app. The packaged runtime is pruned, but local development artifacts are still large.
+
+### Optional binary size expectations
+
+Convenience binaries are currently heavier than typical desktop apps because Recall bundles a local ML runtime and offline-ready core search models. Expect large downloads and meaningful disk usage if you choose the packaged route instead of the source workflow.
+
+## Current Scope
+
+- Windows-first
+- GitHub-first open-source distribution
+- optional unsigned convenience binaries
+- local-first runtime for core search
 
 ## License
 

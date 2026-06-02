@@ -2,17 +2,17 @@ $ErrorActionPreference = "Stop"
 
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $pythonDir = Join-Path $projectRoot "python"
+$sourcePython = Join-Path $pythonDir ".venv\Scripts\python.exe"
 $runtimeRoot = Join-Path $projectRoot "src-tauri\resources\python"
 $runtimeReportPath = Join-Path $projectRoot "src-tauri\resources\python-runtime-report.json"
 $runtimeSmokeScript = Join-Path $projectRoot "scripts\smoke_worker_runtime.py"
-$runtimeBudgetMb = if ($env:RECALL_RUNTIME_MAX_MB) { [double]$env:RECALL_RUNTIME_MAX_MB } else { 1500.0 }
+$prepareModelsScript = Join-Path $projectRoot "scripts\prepare_local_models.py"
+$runtimeBudgetMb = if ($env:RECALL_RUNTIME_MAX_MB) { [double]$env:RECALL_RUNTIME_MAX_MB } else { 2500.0 }
 $runtimeBudgetFiles = if ($env:RECALL_RUNTIME_MAX_FILES) { [int]$env:RECALL_RUNTIME_MAX_FILES } else { 25000 }
 
-if (-not (Test-Path (Join-Path $pythonDir ".venv\Scripts\python.exe"))) {
+if (-not (Test-Path $sourcePython)) {
   throw "Python runtime not found at $pythonDir\.venv. Create python\.venv and install the worker dependencies first."
 }
-
-New-Item -ItemType Directory -Force -Path (Split-Path -Parent $runtimeRoot) | Out-Null
 
 function Sync-Tree {
   param(
@@ -28,18 +28,59 @@ function Sync-Tree {
   }
 }
 
+$sourceModelsRoot = Join-Path $pythonDir "models"
+& $sourcePython $prepareModelsScript --model-root $sourceModelsRoot
+if ($LASTEXITCODE -ne 0) {
+  throw "Failed to prepare Recall core models for runtime staging."
+}
+
+if (Test-Path $runtimeRoot) {
+  Remove-Item -LiteralPath $runtimeRoot -Recurse -Force
+}
+
+New-Item -ItemType Directory -Force -Path (Split-Path -Parent $runtimeRoot) | Out-Null
 $runtimeVenv = Join-Path $runtimeRoot ".venv"
 New-Item -ItemType Directory -Force -Path $runtimeVenv | Out-Null
 Sync-Tree (Join-Path $pythonDir ".venv\Lib") (Join-Path $runtimeVenv "Lib")
 Sync-Tree (Join-Path $pythonDir ".venv\Scripts") (Join-Path $runtimeVenv "Scripts")
 Copy-Item -LiteralPath (Join-Path $pythonDir ".venv\pyvenv.cfg") -Destination (Join-Path $runtimeVenv "pyvenv.cfg") -Force
-Sync-Tree (Join-Path $pythonDir "recall_worker") (Join-Path $runtimeRoot "recall_worker")
+Sync-Tree $sourceModelsRoot (Join-Path $runtimeRoot "models")
 Copy-Item -LiteralPath (Join-Path $pythonDir "run_worker.py") -Destination (Join-Path $runtimeRoot "run_worker.py") -Force
+
+$stagedPython = Join-Path $runtimeVenv "Scripts\python.exe"
+if (-not (Test-Path $stagedPython)) {
+  throw "Staged python executable missing after runtime preparation: $stagedPython"
+}
+
+$wheelhouse = Join-Path $env:TEMP ("recall-wheel-" + [guid]::NewGuid().ToString("N"))
+New-Item -ItemType Directory -Force -Path $wheelhouse | Out-Null
+try {
+  & $sourcePython -m pip wheel --no-deps --wheel-dir $wheelhouse $pythonDir
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to build a non-editable Recall worker wheel."
+  }
+
+  $workerWheel = Get-ChildItem -Path $wheelhouse -Filter "recall_worker-*.whl" | Select-Object -First 1
+  if (-not $workerWheel) {
+    throw "Recall worker wheel was not produced in $wheelhouse."
+  }
+
+  & $stagedPython -m pip install --no-deps --force-reinstall $workerWheel.FullName
+  if ($LASTEXITCODE -ne 0) {
+    throw "Failed to install the Recall worker wheel into the staged runtime."
+  }
+}
+finally {
+  if (Test-Path $wheelhouse) {
+    Remove-Item -LiteralPath $wheelhouse -Recurse -Force
+  }
+}
 
 $env:RECALL_RUNTIME_ROOT = $runtimeRoot
 $env:RECALL_RUNTIME_REPORT = $runtimeReportPath
 $env:RECALL_RUNTIME_MAX_MB = [string]$runtimeBudgetMb
 $env:RECALL_RUNTIME_MAX_FILES = [string]$runtimeBudgetFiles
+$env:RECALL_PROJECT_ROOT = $projectRoot
 
 @'
 from __future__ import annotations
@@ -51,6 +92,7 @@ from pathlib import Path
 
 runtime_root = Path(os.environ["RECALL_RUNTIME_ROOT"])
 runtime_report = Path(os.environ["RECALL_RUNTIME_REPORT"])
+project_root = Path(os.environ["RECALL_PROJECT_ROOT"]).resolve()
 max_mb = float(os.environ["RECALL_RUNTIME_MAX_MB"])
 max_files = int(os.environ["RECALL_RUNTIME_MAX_FILES"])
 venv_root = runtime_root / ".venv"
@@ -68,7 +110,12 @@ protected_roots = [
     site_packages / "PIL",
     site_packages / "cv2",
     site_packages / "huggingface_hub",
+    site_packages / "recall_worker",
 ]
+absolute_path_markers = {
+    str(project_root).replace("\\", "/").lower(),
+    str(project_root).lower(),
+}
 
 
 def remove_path(path: Path) -> None:
@@ -122,6 +169,46 @@ def top_largest_roots() -> list[dict[str, object]]:
     return roots[:10]
 
 
+def scan_for_runtime_leaks() -> list[str]:
+    leak_messages: list[str] = []
+    suspicious_patterns = ("__editable__", ".egg-link", "direct_url.json", ".pth")
+    for path in runtime_root.rglob("*"):
+        if not path.is_file():
+            continue
+
+        if any(pattern in path.name for pattern in suspicious_patterns):
+            try:
+                text = path.read_text(encoding="utf-8")
+            except Exception:
+                text = ""
+            if "__editable__" in path.name or any(marker in text.lower() for marker in absolute_path_markers):
+                leak_messages.append(f"Editable/runtime leak artifact present: {path}")
+                continue
+
+        if path.suffix.lower() not in {".pth", ".py", ".json", ".txt", ".cfg", ".dist-info"} and path.stat().st_size > 1024 * 1024:
+            continue
+
+        try:
+            text = path.read_text(encoding="utf-8")
+        except Exception:
+            continue
+        lowered = text.lower()
+        if any(marker in lowered for marker in absolute_path_markers):
+            leak_messages.append(f"Absolute project path leaked into runtime file: {path}")
+    return leak_messages
+
+
+pyvenv_cfg = venv_root / "pyvenv.cfg"
+if pyvenv_cfg.exists():
+    sanitized_lines = []
+    for raw_line in pyvenv_cfg.read_text(encoding="utf-8").splitlines():
+        if raw_line.lower().startswith("command ="):
+            sanitized_lines.append("command = python -m venv .venv")
+            continue
+        sanitized_lines.append(raw_line)
+    pyvenv_cfg.write_text("\n".join(sanitized_lines) + "\n", encoding="utf-8")
+
+
 for relative in [
     Path(".venv") / "Include",
     Path(".venv") / "share",
@@ -132,8 +219,12 @@ for relative in [
 ]:
     remove_path(runtime_root / relative)
 
-for pattern in ("pip*", "setuptools*", "wheel*"):
+for pattern in ("pip*", "setuptools*", "wheel*", "__editable__*"):
     for path in site_packages.glob(pattern):
+        remove_path(path)
+
+for pattern in ("*.egg-link", "direct_url.json"):
+    for path in site_packages.rglob(pattern):
         remove_path(path)
 
 for path in site_packages.glob("~*"):
@@ -168,6 +259,10 @@ for script_name in [
 ]:
     remove_path(venv_root / "Scripts" / script_name)
 
+leaks = scan_for_runtime_leaks()
+if leaks:
+    raise SystemExit("Runtime integrity check failed:\n- " + "\n- ".join(leaks))
+
 file_count, total_size = stat_tree(runtime_root)
 total_size_mb = round(total_size / 1024 / 1024, 2)
 report = {
@@ -196,11 +291,6 @@ if file_count > max_files:
         f"Prepared runtime has {file_count} files, which exceeds the {max_files} file budget."
     )
 '@ | python -
-
-$stagedPython = Join-Path $runtimeVenv "Scripts\python.exe"
-if (-not (Test-Path $stagedPython)) {
-  throw "Staged python executable missing after runtime preparation: $stagedPython"
-}
 
 if (-not $env:RECALL_SKIP_RUNTIME_SMOKE) {
   & $stagedPython $runtimeSmokeScript --runtime-root $runtimeRoot

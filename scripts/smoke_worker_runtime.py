@@ -33,13 +33,21 @@ class WorkerHarness:
         if not worker_script.exists():
             raise FileNotFoundError(f"Staged worker script not found: {worker_script}")
 
+        offline_cache_root = app_data_dir / "offline-model-caches"
+        offline_cache_root.mkdir(parents=True, exist_ok=True)
         env = os.environ.copy()
         env.update(
             {
                 "PYTHONUTF8": "1",
                 "RECALL_APP_DATA_DIR": str(app_data_dir),
+                "RECALL_MODEL_ROOT": str(runtime_root / "models"),
                 "PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK": "True",
                 "HF_HUB_DISABLE_SYMLINKS_WARNING": "1",
+                "HF_HOME": str(offline_cache_root / "hf-home"),
+                "HUGGINGFACE_HUB_CACHE": str(offline_cache_root / "hf-hub"),
+                "TRANSFORMERS_CACHE": str(offline_cache_root / "transformers"),
+                "HF_HUB_OFFLINE": "1",
+                "TRANSFORMERS_OFFLINE": "1",
                 "USE_TF": "0",
                 "TRANSFORMERS_NO_TF": "1",
             }
