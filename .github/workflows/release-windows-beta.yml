@@ -57,12 +57,20 @@ jobs:
           .venv\Scripts\python.exe -m pip install ".[ml]"
 
       - name: Run GitHub-first validation gates
-        run: npm run validate:release
+        shell: pwsh
+        run: |
+          $env:Path = "$(Resolve-Path python\.venv\Scripts);$env:Path"
+          python -c "import sys; print(sys.executable)"
+          npm run validate:release
 
       - name: Build Windows portable convenience binaries
         env:
           RECALL_SKIP_RUNTIME_SMOKE: "1"
-        run: npm run build:tauri
+        shell: pwsh
+        run: |
+          $env:Path = "$(Resolve-Path python\.venv\Scripts);$env:Path"
+          python -c "import sys; print(sys.executable)"
+          npm run build:tauri
 
       - name: Sign optional release artifacts
         if: ${{ inputs.sign_artifacts }}
