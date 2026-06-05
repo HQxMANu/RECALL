@@ -6,6 +6,21 @@ from recall_worker.search.vector_index import NumpyVectorIndex
 
 
 class NumpyVectorIndexTests(unittest.TestCase):
+    def test_upsert_many_adds_and_replaces_vectors(self) -> None:
+        index = NumpyVectorIndex(4)
+        index.upsert_many(
+            [
+                (1, np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)),
+                (2, np.array([0.0, 1.0, 0.0, 0.0], dtype=np.float32)),
+            ]
+        )
+        index.upsert(2, np.array([0.0, 0.0, 1.0, 0.0], dtype=np.float32))
+
+        results = index.search(np.array([0.0, 0.0, 1.0, 0.0], dtype=np.float32), 2)
+
+        self.assertEqual(results[0][0], 2)
+        self.assertEqual(index._count, 2)  # noqa: SLF001
+
     def test_rebuild_reuses_live_storage_in_numpy_fallback(self) -> None:
         index = NumpyVectorIndex(4)
         index.upsert(1, np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32))

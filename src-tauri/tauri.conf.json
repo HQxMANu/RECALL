@@ -27,7 +27,11 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost; script-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      },
+      "csp": "default-src 'self'; img-src 'self' data: blob: asset: http://asset.localhost; media-src 'self' data: blob: asset: http://asset.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost; script-src 'self'; worker-src 'self' blob:; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'"
     }
   },
   "bundle": {

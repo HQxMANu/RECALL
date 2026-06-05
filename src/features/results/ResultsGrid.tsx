@@ -1,5 +1,8 @@
+import { memo, useEffect, useMemo, useRef } from 'react'
+
 import type { ThumbnailSize } from '../../app/App'
 import type { SearchResult } from '../../types/contracts'
+import { convertLocalAssetPathToSrc } from '../../lib/tauri'
 import { AssetPreviewArt } from '../assets/AssetPreviewArt'
 import { useAssetPreviewSource } from '../assets/useAssetPreviewSource'
 
@@ -11,7 +14,10 @@ type ResultsGridProps = {
   results: SearchResult[]
   statusMessage: string
   thumbnailSize: ThumbnailSize
+  hasMoreResults: boolean
+  isLoadingMore: boolean
   onPreview: (result: SearchResult) => void
+  onLoadMore: () => void
 }
 
 function formatScore(score: number) {
@@ -49,7 +55,17 @@ function ResultCard({
   result: SearchResult
   onPreview: (result: SearchResult) => void
 }) {
-  const imageSource = useAssetPreviewSource(result.assetId, 'thumbnail')
+  const directThumbnailSource = useMemo(
+    () => convertLocalAssetPathToSrc(result.thumbnailPath),
+    [result.thumbnailPath],
+  )
+  const shouldResolveThumbnailFromWorker =
+    !directThumbnailSource && result.assetType !== 'image'
+  const resolvedThumbnailSource = useAssetPreviewSource(
+    shouldResolveThumbnailFromWorker ? result.assetId : null,
+    'thumbnail',
+  )
+  const imageSource = directThumbnailSource ?? resolvedThumbnailSource
 
   return (
     <li>
@@ -61,7 +77,13 @@ function ResultCard({
       >
         <div className="result-card__thumb">
           {imageSource ? (
-            <img src={imageSource} alt={result.filename} loading="lazy" />
+            <img
+              src={imageSource}
+              alt={result.filename}
+              loading="lazy"
+              decoding="async"
+              fetchPriority="low"
+            />
           ) : (
             <div className="result-card__thumb-fallback">
               <AssetPreviewArt result={result} />
@@ -82,6 +104,18 @@ function ResultCard({
   )
 }
 
+const MemoResultCard = memo(
+  ResultCard,
+  (previous, next) =>
+    previous.result.assetId === next.result.assetId &&
+    previous.result.thumbnailPath === next.result.thumbnailPath &&
+    previous.result.previewPath === next.result.previewPath &&
+    previous.result.semanticScore === next.result.semanticScore &&
+    previous.result.textScore === next.result.textScore &&
+    previous.result.finalScore === next.result.finalScore &&
+    previous.result.filename === next.result.filename,
+)
+
 export function ResultsGrid({
   coreSearchReady,
   isSearching,
@@ -90,8 +124,32 @@ export function ResultsGrid({
   results,
   statusMessage,
   thumbnailSize,
+  hasMoreResults,
+  isLoadingMore,
   onPreview,
+  onLoadMore,
 }: ResultsGridProps) {
+  const loadMoreSentinelRef = useRef<HTMLDivElement | null>(null)
+
+  useEffect(() => {
+    const sentinel = loadMoreSentinelRef.current
+    if (!sentinel || !hasMoreResults || isLoadingMore || showLoadingSkeleton) {
+      return
+    }
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((entry) => entry.isIntersecting)) {
+          onLoadMore()
+        }
+      },
+      { rootMargin: '600px 0px' },
+    )
+
+    observer.observe(sentinel)
+    return () => observer.disconnect()
+  }, [hasMoreResults, isLoadingMore, onLoadMore, showLoadingSkeleton])
+
   if (!coreSearchReady) {
     return (
       <div className="results-empty">
@@ -146,10 +204,20 @@ export function ResultsGrid({
   }
 
   return (
-    <ul className="result-grid" data-size={thumbnailSize}>
-      {results.map((result) => (
-        <ResultCard key={result.assetId} result={result} onPreview={onPreview} />
-      ))}
-    </ul>
+    <>
+      <ul className="result-grid" data-size={thumbnailSize}>
+        {results.map((result) => (
+          <MemoResultCard key={result.assetId} result={result} onPreview={onPreview} />
+        ))}
+      </ul>
+      <div
+        ref={loadMoreSentinelRef}
+        className="result-grid__load-more"
+        aria-live="polite"
+        data-loading={isLoadingMore}
+      >
+        {isLoadingMore ? 'Loading more results...' : null}
+      </div>
+    </>
   )
 }

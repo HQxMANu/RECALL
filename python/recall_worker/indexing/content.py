@@ -4,7 +4,7 @@ import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 
 @dataclass(slots=True)
@@ -143,6 +143,10 @@ def render_document_preview(
     finally:
         image.close()
     return preview_path
+
+
+def normalize_image_orientation(image: Image.Image) -> Image.Image:
+    return ImageOps.exif_transpose(image)
 
 
 def _extract_txt_chunks(document_path: Path) -> list[TextChunk]:

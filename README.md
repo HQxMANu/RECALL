@@ -8,11 +8,11 @@ Recall is currently distributed **GitHub-first**:
 
 - the repository is the primary public release surface
 - you can clone it, install the dependencies, and run it locally
-- optional prebuilt Windows binaries may be published on GitHub Releases for convenience
+- prebuilt Windows testing binaries can be published on GitHub Releases for convenience
 - no Microsoft Store dependency
 - no code-signing requirement for the initial open-source launch
 
-If optional Windows binaries are provided, Windows may show an **unsigned / unknown publisher** warning. That is expected for the current release posture.
+If Windows binaries are provided, Windows may show an **unsigned / unknown publisher** warning. That is expected for the current beta release posture.
 
 ## Product Snapshot
 
@@ -29,7 +29,8 @@ If optional Windows binaries are provided, Windows may show an **unsigned / unkn
 - extracts OCR text from indexed visuals
 - builds embeddings for description-based search
 - stores metadata, OCR text, thumbnails, and search state locally
-- supports image, document, and voice-rec search scopes
+- presents an image-first search and preview experience in the current beta UI
+- keeps document and voice-note indexing support in the local worker for continued testing
 - keeps OCR and transcription deferred until indexing actually needs them
 
 ## Quickstart
@@ -72,14 +73,17 @@ This builds a portable Windows package:
 - the portable folder at `src-tauri\target\release\portable\Recall`
 - the portable zip at `src-tauri\target\release\portable\Recall_0.1.0-beta.1_portable-win64.zip`
 
-### Optional Binary Download
+### Download The Windows App
 
-If a GitHub Release includes Windows binaries:
+For normal testers who do **not** want the full developer workspace:
 
-1. download the latest portable zip or unpacked portable folder
-2. keep the bundled `python` folder next to `recall.exe` if you use the portable build
-3. expect Windows to warn that the publisher is unknown if the artifact is unsigned
-4. review the release notes and checksums before running the file
+1. open the latest GitHub Release
+2. download `Recall_0.1.0-beta.1_portable-win64.zip`
+3. unzip it
+4. keep `recall.exe` and the bundled `python` folder together
+5. launch `recall.exe`
+6. expect Windows to warn that the publisher is unknown while artifacts are unsigned
+7. review `SHA256SUMS.txt` in the release before running the file
 
 The repo is still the source of truth even when convenience binaries are published.
 

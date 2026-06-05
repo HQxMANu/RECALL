@@ -52,11 +52,7 @@ export function StatusPanel({ shellReady, status, health, scope }: StatusPanelPr
   const readinessBadge = scopeReady ? 'ready' : health.coreSearchPhase
   const readinessCopy = scopeReady
     ? health.coreSearchMessage
-    : scope === 'documents'
-      ? 'Document search is waiting for the local text embedding model to finish loading.'
-      : scope === 'voice-notes'
-        ? 'Voice rec search is waiting for the local transcription and text embedding models to finish loading.'
-        : 'Image search is waiting for the local vision model to finish loading.'
+    : 'Search is waiting for the local models to finish loading.'
 
   return (
     <aside className="status-panel">

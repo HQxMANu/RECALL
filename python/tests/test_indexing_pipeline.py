@@ -2,6 +2,7 @@ import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 import numpy as np
 from PIL import Image
@@ -14,8 +15,10 @@ from recall_worker.indexing.pipeline import IndexingPipeline
 class FlakyOcrEngine:
     def __init__(self) -> None:
         self.ready_calls = 0
+        self.extract_calls = 0
 
     def extract_text(self, image_path: Path) -> str:
+        self.extract_calls += 1
         if image_path.name.startswith("bad"):
             raise RuntimeError("ocr exploded")
         return "hello world"
@@ -37,6 +40,20 @@ class DummyEmbedder:
         return np.array([1.0, 0.0, 0.0, 0.0], dtype=np.float32)
 
 
+class CountingEmbedder(DummyEmbedder):
+    def __init__(self) -> None:
+        self.image_calls = 0
+        self.text_calls = 0
+
+    def embed_image(self, image_path: Path, hint_text: str = "", image: Image.Image | None = None) -> np.ndarray:
+        self.image_calls += 1
+        return super().embed_image(image_path, hint_text, image)
+
+    def embed_text(self, text: str) -> np.ndarray:
+        self.text_calls += 1
+        return super().embed_text(text)
+
+
 class RecordingVectorIndex:
     def __init__(self) -> None:
         self.upserts: list[int] = []
@@ -46,6 +63,10 @@ class RecordingVectorIndex:
     def upsert(self, image_id: int, vector: np.ndarray) -> None:
         del vector
         self.upserts.append(image_id)
+
+    def upsert_many(self, records: list[tuple[int, np.ndarray]]) -> None:
+        for image_id, vector in records:
+            self.upsert(image_id, vector)
 
     def remove(self, image_id: int) -> None:
         self.removals.append(image_id)
@@ -495,6 +516,281 @@ class IndexingPipelineTests(unittest.TestCase):
                 (str(document_path),),
             ).fetchone()[0]
             self.assertGreater(chunk_count, 0)
+            database.close()
+
+    def test_safe_rebuild_skips_ready_unchanged_image(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder_path = root / "Photos"
+            folder_path.mkdir()
+            image_path = folder_path / "stable.png"
+            self._create_image(image_path, (220, 140))
+
+            config = AppConfig(
+                app_data_dir=root,
+                database_path=root / "recall.db",
+                thumbnail_dir=root / "thumbnails",
+                vector_index_path=root / "recall.faiss",
+                max_thumbnail_size=320,
+                search_limit=200,
+            )
+            config.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            database = Database(config.database_path)
+            added, _ = database.add_or_reactivate_folders(
+                [str(folder_path)],
+                "2026-05-16T00:00:00+00:00",
+            )
+            ocr_engine = FlakyOcrEngine()
+            embedder = CountingEmbedder()
+            vector_index = RecordingVectorIndex()
+            pipeline = IndexingPipeline(
+                config,
+                database,
+                ocr_engine,
+                embedder,
+                vector_index,
+            )
+
+            pipeline.scan_folder(
+                {"id": added[0]["id"], "path": str(folder_path)},
+                lambda total, processed: None,
+            )
+            ocr_engine.extract_calls = 0
+            embedder.image_calls = 0
+            embedder.text_calls = 0
+            vector_index.upserts.clear()
+
+            with patch("recall_worker.indexing.pipeline.file_sha256", side_effect=AssertionError("unexpected hash")):
+                pipeline.scan_folder(
+                    {"id": added[0]["id"], "path": str(folder_path)},
+                    lambda total, processed: None,
+                )
+
+            self.assertEqual(ocr_engine.extract_calls, 0)
+            self.assertEqual(embedder.image_calls, 0)
+            self.assertEqual(embedder.text_calls, 0)
+            self.assertEqual(vector_index.upserts, [])
+            self.assertEqual(ocr_engine.ready_calls, 1)
+            database.close()
+
+    def test_safe_rebuild_repairs_missing_image_thumbnail_without_reembedding(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder_path = root / "Photos"
+            folder_path.mkdir()
+            image_path = folder_path / "missing-thumb.png"
+            self._create_image(image_path, (220, 140))
+
+            config = AppConfig(
+                app_data_dir=root,
+                database_path=root / "recall.db",
+                thumbnail_dir=root / "thumbnails",
+                vector_index_path=root / "recall.faiss",
+                max_thumbnail_size=320,
+                search_limit=200,
+            )
+            config.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            database = Database(config.database_path)
+            added, _ = database.add_or_reactivate_folders(
+                [str(folder_path)],
+                "2026-05-16T00:00:00+00:00",
+            )
+            ocr_engine = FlakyOcrEngine()
+            embedder = CountingEmbedder()
+            vector_index = RecordingVectorIndex()
+            pipeline = IndexingPipeline(
+                config,
+                database,
+                ocr_engine,
+                embedder,
+                vector_index,
+            )
+
+            pipeline.scan_folder(
+                {"id": added[0]["id"], "path": str(folder_path)},
+                lambda total, processed: None,
+            )
+            asset = database.get_asset_by_path(str(image_path))
+            image = database.get_image_by_path(str(image_path))
+            self.assertIsNotNone(asset)
+            self.assertIsNotNone(image)
+            thumbnail_path = Path(asset["preview_path"])
+            thumbnail_path.unlink()
+
+            ocr_engine.extract_calls = 0
+            embedder.image_calls = 0
+            embedder.text_calls = 0
+            vector_index.upserts.clear()
+
+            pipeline.scan_folder(
+                {"id": added[0]["id"], "path": str(folder_path)},
+                lambda total, processed: None,
+            )
+
+            repaired_asset = database.get_asset_by_path(str(image_path))
+            repaired_image = database.get_image_by_path(str(image_path))
+            self.assertTrue(Path(repaired_asset["preview_path"]).exists())
+            self.assertEqual(repaired_asset["preview_path"], repaired_image["thumbnail_path"])
+            self.assertEqual(ocr_engine.extract_calls, 0)
+            self.assertEqual(embedder.image_calls, 0)
+            self.assertEqual(embedder.text_calls, 0)
+            self.assertEqual(vector_index.upserts, [])
+            self.assertEqual(ocr_engine.ready_calls, 1)
+            database.close()
+
+    def test_existing_image_thumbnail_is_reused_unless_force_reprocesses(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder_path = root / "Photos"
+            folder_path.mkdir()
+            image_path = folder_path / "thumbnail.png"
+            self._create_image(image_path, (220, 140))
+
+            config = AppConfig(
+                app_data_dir=root,
+                database_path=root / "recall.db",
+                thumbnail_dir=root / "thumbnails",
+                vector_index_path=root / "recall.faiss",
+                max_thumbnail_size=320,
+                search_limit=200,
+            )
+            config.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            database = Database(config.database_path)
+            added, _ = database.add_or_reactivate_folders(
+                [str(folder_path)],
+                "2026-05-16T00:00:00+00:00",
+            )
+            pipeline = IndexingPipeline(
+                config,
+                database,
+                FlakyOcrEngine(),
+                DummyEmbedder(),
+                RecordingVectorIndex(),
+            )
+
+            pipeline.scan_folder(
+                {"id": added[0]["id"], "path": str(folder_path)},
+                lambda total, processed: None,
+            )
+            asset = database.get_asset_by_path(str(image_path))
+            thumbnail_path = Path(asset["preview_path"])
+            thumbnail_path.write_bytes(b"keep-existing-thumbnail")
+
+            pipeline.scan_folder(
+                {"id": added[0]["id"], "path": str(folder_path)},
+                lambda total, processed: None,
+            )
+            self.assertEqual(thumbnail_path.read_bytes(), b"keep-existing-thumbnail")
+
+            pipeline.scan_folder(
+                {"id": added[0]["id"], "path": str(folder_path)},
+                lambda total, processed: None,
+                force_reprocess=True,
+            )
+            self.assertNotEqual(thumbnail_path.read_bytes(), b"keep-existing-thumbnail")
+            database.close()
+
+    def test_force_rebuild_reprocesses_ready_unchanged_image(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder_path = root / "Photos"
+            folder_path.mkdir()
+            image_path = folder_path / "force.png"
+            self._create_image(image_path, (220, 140))
+
+            config = AppConfig(
+                app_data_dir=root,
+                database_path=root / "recall.db",
+                thumbnail_dir=root / "thumbnails",
+                vector_index_path=root / "recall.faiss",
+                max_thumbnail_size=320,
+                search_limit=200,
+            )
+            config.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            database = Database(config.database_path)
+            added, _ = database.add_or_reactivate_folders(
+                [str(folder_path)],
+                "2026-05-16T00:00:00+00:00",
+            )
+            ocr_engine = FlakyOcrEngine()
+            embedder = CountingEmbedder()
+            vector_index = RecordingVectorIndex()
+            pipeline = IndexingPipeline(
+                config,
+                database,
+                ocr_engine,
+                embedder,
+                vector_index,
+            )
+
+            pipeline.scan_folder(
+                {"id": added[0]["id"], "path": str(folder_path)},
+                lambda total, processed: None,
+            )
+            ocr_engine.extract_calls = 0
+            embedder.image_calls = 0
+            embedder.text_calls = 0
+            vector_index.upserts.clear()
+
+            pipeline.scan_folder(
+                {"id": added[0]["id"], "path": str(folder_path)},
+                lambda total, processed: None,
+                force_reprocess=True,
+            )
+
+            self.assertEqual(ocr_engine.extract_calls, 1)
+            self.assertEqual(embedder.image_calls, 1)
+            self.assertEqual(embedder.text_calls, 1)
+            self.assertGreaterEqual(len(vector_index.upserts), 1)
+            database.close()
+
+    def test_changed_image_reuses_precomputed_content_hash(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            folder_path = root / "Photos"
+            folder_path.mkdir()
+            image_path = folder_path / "changed.png"
+            self._create_image(image_path, (220, 140))
+
+            config = AppConfig(
+                app_data_dir=root,
+                database_path=root / "recall.db",
+                thumbnail_dir=root / "thumbnails",
+                vector_index_path=root / "recall.faiss",
+                max_thumbnail_size=320,
+                search_limit=200,
+            )
+            config.thumbnail_dir.mkdir(parents=True, exist_ok=True)
+            database = Database(config.database_path)
+            added, _ = database.add_or_reactivate_folders(
+                [str(folder_path)],
+                "2026-05-16T00:00:00+00:00",
+            )
+            pipeline = IndexingPipeline(
+                config,
+                database,
+                FlakyOcrEngine(),
+                DummyEmbedder(),
+                RecordingVectorIndex(),
+            )
+
+            pipeline.scan_folder(
+                {"id": added[0]["id"], "path": str(folder_path)},
+                lambda total, processed: None,
+            )
+            self._create_image(image_path, (260, 180))
+
+            real_file_sha256 = __import__(
+                "recall_worker.indexing.pipeline",
+                fromlist=["file_sha256"],
+            ).file_sha256
+            with patch("recall_worker.indexing.pipeline.file_sha256", wraps=real_file_sha256) as sha_mock:
+                pipeline.scan_folder(
+                    {"id": added[0]["id"], "path": str(folder_path)},
+                    lambda total, processed: None,
+                )
+
+            self.assertEqual(sha_mock.call_count, 1)
             database.close()
 
     def test_scan_folder_generates_document_preview(self) -> None:

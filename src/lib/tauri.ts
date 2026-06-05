@@ -1,4 +1,4 @@
-import { invoke, isTauri } from '@tauri-apps/api/core'
+import { convertFileSrc, invoke, isTauri } from '@tauri-apps/api/core'
 
 import { mockApi } from './mock'
 import type {
@@ -11,7 +11,28 @@ import type {
 } from '../types/contracts'
 
 const api = isTauri() ? null : mockApi
+const ASSET_PREVIEW_CACHE_MAX_ENTRIES = 400
 const assetPreviewCache = new Map<string, Promise<string | null> | string | null>()
+
+function getCachedAssetPreview(cacheKey: string) {
+  if (!assetPreviewCache.has(cacheKey)) {
+    return undefined
+  }
+  const cached = assetPreviewCache.get(cacheKey)
+  assetPreviewCache.delete(cacheKey)
+  assetPreviewCache.set(cacheKey, cached ?? null)
+  return cached
+}
+
+function enforceAssetPreviewCacheLimit() {
+  while (assetPreviewCache.size > ASSET_PREVIEW_CACHE_MAX_ENTRIES) {
+    const oldestKey = assetPreviewCache.keys().next().value
+    if (oldestKey === undefined) {
+      break
+    }
+    assetPreviewCache.delete(oldestKey)
+  }
+}
 
 export async function selectFolders(): Promise<FolderSelectionResult> {
   if (api) {
@@ -37,12 +58,15 @@ export async function removeIndexedFolder(folderId: number): Promise<void> {
   return invoke('remove_indexed_folder', { folderId })
 }
 
-export async function rebuildIndex(folderIds?: number[]): Promise<void> {
+export async function rebuildIndex(
+  folderIds?: number[],
+  options?: { force?: boolean },
+): Promise<void> {
   if (api) {
-    return api.rebuildIndex(folderIds)
+    return api.rebuildIndex(folderIds, options)
   }
 
-  return invoke('rebuild_index', { folderIds })
+  return invoke('rebuild_index', { folderIds, force: options?.force ?? false })
 }
 
 export async function getIndexingStatus(): Promise<IndexingStatus> {
@@ -98,7 +122,7 @@ export async function getAssetPreviewSource(
   variant: 'thumbnail' | 'preview',
 ): Promise<string | null> {
   const cacheKey = `${assetId}:${variant}`
-  const cached = assetPreviewCache.get(cacheKey)
+  const cached = getCachedAssetPreview(cacheKey)
   if (cached instanceof Promise) {
     return cached
   }
@@ -108,10 +132,13 @@ export async function getAssetPreviewSource(
 
   const nextRequest = (api
     ? api.getAssetPreviewSource(assetId, variant)
-    : invoke<string | null>('resolve_asset_preview_source', { assetId, variant })
+    : invoke<string | null>('resolve_asset_preview_source', { assetId, variant }).then((source) =>
+        source ? convertFileSrc(source) : null,
+      )
   )
     .then((source) => {
       assetPreviewCache.set(cacheKey, source)
+      enforceAssetPreviewCacheLimit()
       return source
     })
     .catch((error) => {
@@ -120,9 +147,22 @@ export async function getAssetPreviewSource(
     })
 
   assetPreviewCache.set(cacheKey, nextRequest)
+  enforceAssetPreviewCacheLimit()
   return nextRequest
 }
 
 export function clearAssetPreviewCache() {
   assetPreviewCache.clear()
+}
+
+export function convertLocalAssetPathToSrc(path: string | null | undefined): string | null {
+  if (!path) {
+    return null
+  }
+
+  if (api) {
+    return path
+  }
+
+  return convertFileSrc(path)
 }

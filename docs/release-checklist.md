@@ -73,6 +73,22 @@ npm run build:tauri
 
 4. State clearly in the release notes that the Windows artifacts may be unsigned and may show an unknown publisher warning.
 
+5. Prefer publishing from a version tag:
+
+```powershell
+git tag v0.1.0-beta.1
+git push origin v0.1.0-beta.1
+```
+
+The `Build Windows Portable Release Artifacts` workflow creates a draft prerelease with:
+
+- `recall.exe`
+- `Recall_0.1.0-beta.1_portable-win64.zip`
+- `SHA256SUMS.txt`
+- `python-runtime-report.json`
+
+Review the draft release, edit the notes if needed, then publish it manually from GitHub.
+
 ## Future Enhancement
 
 Code signing is recommended for broader non-technical Windows distribution, but it is not a current blocker for the GitHub-first open-source release posture.

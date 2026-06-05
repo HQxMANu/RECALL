@@ -821,6 +821,50 @@ class Database:
                 )
             self._connection.commit()
 
+    def update_image_preview(
+        self,
+        image_id: int,
+        asset_id: int,
+        preview_path: str,
+        last_indexed_at: str | None = None,
+    ) -> None:
+        with self._lock:
+            if last_indexed_at:
+                self._connection.execute(
+                    """
+                    UPDATE indexed_images
+                    SET thumbnail_path = ?, last_indexed_at = ?
+                    WHERE id = ?
+                    """,
+                    (preview_path, last_indexed_at, image_id),
+                )
+                self._connection.execute(
+                    """
+                    UPDATE indexed_assets
+                    SET preview_path = ?, last_indexed_at = ?
+                    WHERE id = ?
+                    """,
+                    (preview_path, last_indexed_at, asset_id),
+                )
+            else:
+                self._connection.execute(
+                    """
+                    UPDATE indexed_images
+                    SET thumbnail_path = ?
+                    WHERE id = ?
+                    """,
+                    (preview_path, image_id),
+                )
+                self._connection.execute(
+                    """
+                    UPDATE indexed_assets
+                    SET preview_path = ?
+                    WHERE id = ?
+                    """,
+                    (preview_path, asset_id),
+                )
+            self._connection.commit()
+
     def _ensure_image_asset_backfill_locked(self) -> None:
         if self._read_setting_locked(IMAGE_ASSET_BACKFILL_KEY) == IMAGE_ASSET_BACKFILL_VERSION:
             return

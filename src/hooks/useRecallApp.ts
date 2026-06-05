@@ -12,7 +12,6 @@ import { isTauri } from '@tauri-apps/api/core'
 
 import {
   clearAssetPreviewCache,
-  copyAssetPath,
   getAppHealth,
   getIndexingStatus,
   listIndexedFolders,
@@ -142,14 +141,19 @@ export function useRecallApp(scope: SearchScope) {
   const [selectedResult, setSelectedResult] = useState<SearchResult | null>(null)
   const [isBootstrapping, setIsBootstrapping] = useState(true)
   const [isSearching, setIsSearching] = useState(false)
+  const [isLoadingMore, setIsLoadingMore] = useState(false)
+  const [hasMoreResults, setHasMoreResults] = useState(false)
   const [showSearchSkeleton, setShowSearchSkeleton] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const shellRefreshInFlight = useRef(false)
   const healthRefreshInFlight = useRef(false)
   const latestSearchRequestId = useRef(0)
   const activeSearchRequestId = useRef(0)
+  const loadMoreInFlight = useRef(false)
   const mountedRef = useRef(true)
   const searchCache = useRef(new Map<string, SearchCacheEntry>())
+  const currentSearchRequest = useRef<SearchRequest | null>(null)
+  const completedFirstPageCacheKey = useRef<string | null>(null)
   const previousSearchInputs = useRef<{
     query: string
     scope: SearchScope
@@ -252,7 +256,36 @@ export function useRecallApp(scope: SearchScope) {
     }
   }
 
-  const runSearch = useEffectEvent(async (request: SearchRequest) => {
+  const mergeSearchResponses = (current: SearchResponse, next: SearchResponse): SearchResponse => {
+    const seenAssetIds = new Set<number>()
+    const results = [...current.results, ...next.results].filter((result) => {
+      if (seenAssetIds.has(result.assetId)) {
+        return false
+      }
+      seenAssetIds.add(result.assetId)
+      return true
+    })
+
+    return {
+      ...next,
+      results,
+      totalHits: Math.max(next.totalHits, results.length),
+    }
+  }
+
+  const canRequestMore = (
+    response: SearchResponse,
+    visibleResultCount: number,
+    request: SearchRequest,
+  ) => {
+    const limit = request.limit ?? SEARCH_LIMIT
+    if (response.totalHits > visibleResultCount) {
+      return true
+    }
+    return response.results.length >= limit
+  }
+
+  const runSearch = useEffectEvent(async (request: SearchRequest, append = false) => {
     if (!coreSearchReady) {
       return
     }
@@ -262,13 +295,28 @@ export function useRecallApp(scope: SearchScope) {
 
     const requestId = latestSearchRequestId.current + 1
     latestSearchRequestId.current = requestId
-    activeSearchRequestId.current = requestId
+    if (!append) {
+      activeSearchRequestId.current = requestId
+      completedFirstPageCacheKey.current = null
+    }
     if (cachedResponse) {
+      const nextState = append
+        ? mergeSearchResponses(searchState, cachedResponse)
+        : cachedResponse
       startTransition(() => {
-        setSearchState(cachedResponse)
+        setSearchState(nextState)
+        setHasMoreResults(canRequestMore(cachedResponse, nextState.results.length, request))
         setShowSearchSkeleton(false)
       })
-    } else {
+      if (!append) {
+        completedFirstPageCacheKey.current = cacheKey
+      }
+      if (append) {
+        setIsLoadingMore(false)
+        loadMoreInFlight.current = false
+        return
+      }
+    } else if (!append) {
       startTransition(() => {
         setSearchState({
           results: [],
@@ -279,16 +327,26 @@ export function useRecallApp(scope: SearchScope) {
         setShowSearchSkeleton(true)
       })
     }
-    setIsSearching(true)
+    if (append) {
+      setIsLoadingMore(true)
+    } else {
+      setIsSearching(true)
+      setHasMoreResults(false)
+    }
     try {
       const response = await searchAssets(request)
       writeSearchCache(searchCache.current, cacheKey, response)
       if (mountedRef.current && requestId === latestSearchRequestId.current) {
+        const nextState = append ? mergeSearchResponses(searchState, response) : response
         startTransition(() => {
-          setSearchState(response)
+          setSearchState(nextState)
+          setHasMoreResults(canRequestMore(response, nextState.results.length, request))
           setShowSearchSkeleton(false)
           setErrorMessage(null)
         })
+        if (!append) {
+          completedFirstPageCacheKey.current = cacheKey
+        }
       }
     } catch (error) {
       if (mountedRef.current && requestId === latestSearchRequestId.current) {
@@ -296,7 +354,12 @@ export function useRecallApp(scope: SearchScope) {
         setErrorMessage(error instanceof Error ? error.message : 'Search failed.')
       }
     } finally {
-      if (mountedRef.current && requestId === activeSearchRequestId.current) {
+      if (append) {
+        if (mountedRef.current) {
+          setIsLoadingMore(false)
+        }
+        loadMoreInFlight.current = false
+      } else if (mountedRef.current && requestId === activeSearchRequestId.current) {
         setIsSearching(false)
         setShowSearchSkeleton(false)
       }
@@ -410,6 +473,7 @@ export function useRecallApp(scope: SearchScope) {
       limit: SEARCH_LIMIT,
       offset: 0,
     }
+    currentSearchRequest.current = request
 
     const shouldSearchImmediately =
       !previous ||
@@ -435,6 +499,61 @@ export function useRecallApp(scope: SearchScope) {
 
     return () => window.clearTimeout(timeoutId)
   }, [coreSearchReady, deferredQuery, scope, searchRefreshToken, selectedFolderIds])
+
+  const loadMoreResults = async () => {
+    if (!coreSearchReady || isSearching || isLoadingMore || loadMoreInFlight.current || !hasMoreResults) {
+      return
+    }
+    if (searchState.results.length < SEARCH_LIMIT) {
+      return
+    }
+
+    const baseRequest = currentSearchRequest.current
+    if (!baseRequest) {
+      return
+    }
+
+    const baseCacheKey = buildSearchCacheKey({ ...baseRequest, offset: 0 })
+    if (completedFirstPageCacheKey.current !== baseCacheKey) {
+      return
+    }
+
+    loadMoreInFlight.current = true
+    const nextRequest: SearchRequest = {
+      ...baseRequest,
+      offset: searchState.results.length,
+      limit: SEARCH_LIMIT,
+    }
+    const cacheKey = buildSearchCacheKey(nextRequest)
+    const cachedResponse = readSearchCache(searchCache.current, cacheKey)
+
+    setIsLoadingMore(true)
+    try {
+      const response = cachedResponse ?? await searchAssets(nextRequest)
+      if (!cachedResponse) {
+        writeSearchCache(searchCache.current, cacheKey, response)
+      }
+      if (!mountedRef.current || completedFirstPageCacheKey.current !== baseCacheKey) {
+        return
+      }
+
+      const nextState = mergeSearchResponses(searchState, response)
+      startTransition(() => {
+        setSearchState(nextState)
+        setHasMoreResults(canRequestMore(response, nextState.results.length, nextRequest))
+        setErrorMessage(null)
+      })
+    } catch (error) {
+      if (mountedRef.current && completedFirstPageCacheKey.current === baseCacheKey) {
+        setErrorMessage(error instanceof Error ? error.message : 'Failed to load more results.')
+      }
+    } finally {
+      loadMoreInFlight.current = false
+      if (mountedRef.current) {
+        setIsLoadingMore(false)
+      }
+    }
+  }
 
   const addFolders = async () => {
     await selectFolders()
@@ -490,7 +609,10 @@ export function useRecallApp(scope: SearchScope) {
     selectedResult,
     isBootstrapping,
     isSearching,
+    isLoadingMore,
+    hasMoreResults,
     errorMessage,
+    loadMoreResults,
     addFolders,
     removeFolder,
     rebuildAll,
@@ -501,6 +623,5 @@ export function useRecallApp(scope: SearchScope) {
     closePreview,
     openLocation: openFileLocation,
     openFile: openAssetFile,
-    copyPath: copyAssetPath,
   }
 }

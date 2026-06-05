@@ -70,7 +70,14 @@ class NumpyVectorIndex:
         self._rebuild_in_place = False
 
     def upsert(self, image_id: int, vector: np.ndarray) -> None:
-        self._vectors[image_id] = np.asarray(vector, dtype=np.float32)
+        self.upsert_many([(image_id, vector)])
+
+    def upsert_many(self, records: list[tuple[int, np.ndarray]]) -> None:
+        if not records:
+            return
+        deduped = {image_id: vector for image_id, vector in records}
+        for image_id, vector in deduped.items():
+            self._vectors[image_id] = np.asarray(vector, dtype=np.float32)
         self._dirty = True
         self._count = len(self._vectors)
 
@@ -183,13 +190,19 @@ class FaissVectorIndex(NumpyVectorIndex):
         self._rebuild_count = 0
 
     def upsert(self, image_id: int, vector: np.ndarray) -> None:
-        self.remove(image_id)
-        array = vector.astype(np.float32)[None, :]
-        ids = np.array([image_id], dtype=np.int64)
-        self._index.add_with_ids(array, ids)
-        self._ids.add(image_id)
+        self.upsert_many([(image_id, vector)])
+
+    def upsert_many(self, records: list[tuple[int, np.ndarray]]) -> None:
+        if not records:
+            return
+        deduped = {image_id: vector for image_id, vector in records}
+        ids = np.array(list(deduped), dtype=np.int64)
+        removed = int(self._index.remove_ids(ids))
+        vectors = np.stack([vector.astype(np.float32) for vector in deduped.values()], axis=0)
+        self._index.add_with_ids(vectors, ids)
+        self._ids.update(deduped)
         self._dirty = True
-        self._count += 1
+        self._count = max(0, self._count - removed) + len(deduped)
 
     def remove(self, image_id: int) -> None:
         if image_id in self._ids or self._count > 0:

@@ -3,7 +3,7 @@
 Recall uses a three-layer local architecture:
 
 1. `React + Tauri UI`
-   - Search bar, sidebar, result grid, preview modal
+   - Search bar, result grid, preview modal, and status surfaces
    - Polls indexing status and health
    - Invokes Rust commands only
 
@@ -16,7 +16,7 @@ Recall uses a three-layer local architecture:
 
 3. `Python worker`
    - Owns SQLite writes and schema
-   - Indexes supported images recursively
+   - Indexes supported local assets recursively
    - Generates thumbnails
    - Extracts OCR text
    - Creates embeddings

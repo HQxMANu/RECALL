@@ -67,12 +67,19 @@ pub async fn remove_indexed_folder(
 #[tauri::command]
 pub async fn rebuild_index(
     folder_ids: Option<Vec<i64>>,
+    force: Option<bool>,
     app: AppHandle,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
     let worker = state.worker.client().await?;
     let _: serde_json::Value = worker
-        .request("rebuild_index", json!({ "folderIds": folder_ids.unwrap_or_default() }))
+        .request(
+            "rebuild_index",
+            json!({
+                "folderIds": folder_ids.unwrap_or_default(),
+                "force": force.unwrap_or(false),
+            }),
+        )
         .await?;
     state.emit_current_snapshots(&app).await?;
     Ok(())
@@ -118,8 +125,9 @@ pub async fn resolve_asset_preview_source(
 #[tauri::command]
 pub async fn open_file_location(asset_id: i64, state: State<'_, AppState>) -> Result<(), String> {
     let canonical = state.resolve_asset_path(asset_id)?;
-    Command::new("explorer")
-        .arg(format!("/select,{}", canonical.display()))
+    Command::new("explorer.exe")
+        .arg("/select,")
+        .arg(&canonical)
         .spawn()
         .map_err(|error| error.to_string())?;
     Ok(())

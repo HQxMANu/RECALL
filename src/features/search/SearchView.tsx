@@ -11,8 +11,11 @@ type SearchViewProps = {
   errorMessage: string | null
   statusMessage: string
   thumbnailSize: ThumbnailSize
+  hasMoreResults: boolean
+  isLoadingMore: boolean
   onThumbnailSizeChange: (size: ThumbnailSize) => void
   onPreview: (result: SearchResult) => void
+  onLoadMore: () => void
 }
 
 const thumbnailOptions: Array<{
@@ -34,8 +37,11 @@ export function SearchView({
   errorMessage,
   statusMessage,
   thumbnailSize,
+  hasMoreResults,
+  isLoadingMore,
   onThumbnailSizeChange,
   onPreview,
+  onLoadMore,
 }: SearchViewProps) {
   return (
     <section className="workspace-panel">
@@ -78,7 +84,10 @@ export function SearchView({
           results={results}
           statusMessage={statusMessage}
           thumbnailSize={thumbnailSize}
+          hasMoreResults={hasMoreResults}
+          isLoadingMore={isLoadingMore}
           onPreview={onPreview}
+          onLoadMore={onLoadMore}
         />
       </div>
     </section>

@@ -240,7 +240,14 @@ class RecallWorker:
 
     def rebuild_index(self, params: dict) -> dict:
         folder_ids = params.get("folderIds") or [folder["id"] for folder in self.database.list_folders()]
-        self._enqueue("full_index", {"folderIds": folder_ids, "triggerSource": "manual_rebuild"})
+        self._enqueue(
+            "full_index",
+            {
+                "folderIds": folder_ids,
+                "triggerSource": "manual_rebuild",
+                "forceReprocess": bool(params.get("force", False)),
+            },
+        )
         return {"queued": True}
 
     def search(self, params: dict) -> dict:
@@ -480,9 +487,12 @@ class RecallWorker:
             self._scheduler_metrics["dedupedFullIndexJobs"] += 1
             return
 
+        incoming_force_reprocess = bool(payload.get("forceReprocess", False))
+
         if not self._full_index_jobs:
             queued_payload = dict(payload)
             queued_payload["folderIds"] = remaining_folder_ids
+            queued_payload["forceReprocess"] = incoming_force_reprocess
             self._full_index_jobs.append(queued_payload)
             return
 
@@ -495,6 +505,9 @@ class RecallWorker:
 
         pending_payload["folderIds"] = sorted((*pending_folder_ids, *new_folder_ids))
         pending_payload["triggerSource"] = payload.get("triggerSource", pending_payload.get("triggerSource", "system"))
+        pending_payload["forceReprocess"] = bool(
+            pending_payload.get("forceReprocess", False) or incoming_force_reprocess
+        )
         self._scheduler_metrics["mergedFullIndexJobs"] += 1
 
     @staticmethod
@@ -581,6 +594,7 @@ class RecallWorker:
             try:
                 if job_type == "full_index":
                     folder_ids = payload.get("folderIds") or []
+                    force_reprocess = bool(payload.get("forceReprocess", False))
                     folders = {int(folder["id"]): folder for folder in self.database.get_active_folder_records()}
                     for folder_id in folder_ids:
                         folder_record = folders.get(int(folder_id))
@@ -605,7 +619,11 @@ class RecallWorker:
                                 last_progress_flush = now
                                 last_progress_processed = processed
 
-                        self.pipeline.scan_folder(folder_record, progress)
+                        self.pipeline.scan_folder(
+                            folder_record,
+                            progress,
+                            force_reprocess=force_reprocess,
+                        )
                 elif job_type == "fs_events":
                     folders = self.database.list_folders()
                     self.pipeline.process_events(payload.get("events") or [], folders)

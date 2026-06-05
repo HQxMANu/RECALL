@@ -18,11 +18,7 @@ export function StatusPill({ health, status, scope }: StatusPillProps) {
     !scopeReady
       ? health.coreSearchPhase === 'error'
         ? 'Search failed to start'
-        : scope === 'documents'
-          ? 'Document search warming'
-          : scope === 'voice-notes'
-            ? 'Voice rec search warming'
-            : 'Image search warming'
+        : 'Search warming'
       : status.state === 'indexing'
       ? `${status.itemsProcessed.toLocaleString()} / ${status.itemsTotal.toLocaleString()} indexed`
       : status.state === 'error'

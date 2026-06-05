@@ -182,8 +182,9 @@ export const mockApi = {
     mockFolders = mockFolders.filter((folder) => folder.id !== folderId)
   },
 
-  async rebuildIndex(folderIds?: number[]): Promise<void> {
+  async rebuildIndex(folderIds?: number[], options?: { force?: boolean }): Promise<void> {
     void folderIds
+    void options
   },
 
   async getIndexingStatus(): Promise<IndexingStatus> {

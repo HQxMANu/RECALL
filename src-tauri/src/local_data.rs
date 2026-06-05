@@ -5,7 +5,6 @@ use std::{
 };
 
 use anyhow::{anyhow, Context};
-use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use rusqlite::{params, params_from_iter, types::Value, Connection, OptionalExtension};
 use serde_json::json;
 
@@ -256,10 +255,7 @@ pub fn resolve_asset_preview_source(
         other => return Err(anyhow!("Unsupported preview variant: {other}")),
     };
 
-    selected_path
-        .map(read_data_url)
-        .transpose()
-        .with_context(|| format!("Failed to prepare {variant} preview for asset {asset_id}"))
+    Ok(selected_path.map(|path| path.to_string_lossy().to_string()))
 }
 
 fn recent_asset_issues(connection: &Connection) -> anyhow::Result<Vec<AssetIssue>> {
@@ -341,32 +337,6 @@ fn canonicalize_existing_path(path: &str) -> anyhow::Result<PathBuf> {
 
     fs::canonicalize(candidate)
         .with_context(|| format!("Failed to resolve {}", candidate.display()))
-}
-
-fn read_data_url(path: PathBuf) -> anyhow::Result<String> {
-    let bytes = fs::read(&path).with_context(|| format!("Failed to read {}", path.display()))?;
-    let mime_type = guess_mime_type(&path);
-    Ok(format!(
-        "data:{mime_type};base64,{}",
-        BASE64_STANDARD.encode(bytes)
-    ))
-}
-
-fn guess_mime_type(path: &Path) -> &'static str {
-    match path
-        .extension()
-        .and_then(|extension| extension.to_str())
-        .map(|extension| extension.to_ascii_lowercase())
-        .as_deref()
-    {
-        Some("png") => "image/png",
-        Some("jpg") | Some("jpeg") => "image/jpeg",
-        Some("webp") => "image/webp",
-        Some("gif") => "image/gif",
-        Some("bmp") => "image/bmp",
-        Some("svg") => "image/svg+xml",
-        _ => "application/octet-stream",
-    }
 }
 
 fn idle_status() -> IndexingStatus {

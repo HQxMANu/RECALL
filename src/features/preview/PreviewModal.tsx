@@ -9,7 +9,6 @@ type PreviewModalProps = {
   onClose: () => void
   onOpenFile: (assetId: number) => Promise<void>
   onOpenLocation: (assetId: number) => Promise<void>
-  onCopyPath: (assetId: number) => Promise<void>
 }
 
 function formatDate(isoDate?: string | null) {
@@ -28,7 +27,6 @@ export function PreviewModal({
   onClose,
   onOpenFile,
   onOpenLocation,
-  onCopyPath,
 }: PreviewModalProps) {
   const imageSource = useAssetPreviewSource(result?.assetId ?? null, 'preview')
 
@@ -135,28 +133,19 @@ export function PreviewModal({
           </section>
 
           <div className="modal__actions">
-            {result.assetType !== 'image' ? (
-              <button
-                type="button"
-                className="button-primary"
-                onClick={() => onOpenFile(result.assetId)}
-              >
-                Open file
-              </button>
-            ) : null}
             <button
               type="button"
-              className={result.assetType === 'image' ? 'button-primary' : 'button-secondary'}
-              onClick={() => onOpenLocation(result.assetId)}
+              className="button-primary"
+              onClick={() => onOpenFile(result.assetId)}
             >
-              Open file location
+              Open file
             </button>
             <button
               type="button"
               className="button-secondary"
-              onClick={() => onCopyPath(result.assetId)}
+              onClick={() => onOpenLocation(result.assetId)}
             >
-              Copy file path
+              Open file location
             </button>
           </div>
         </aside>

@@ -1,6 +1,9 @@
 name: Build Windows Portable Release Artifacts
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
     inputs:
       sign_artifacts:
@@ -8,6 +11,14 @@ on:
         required: true
         default: false
         type: boolean
+      publish_github_release:
+        description: Publish a GitHub Release from this run
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
 
 jobs:
   windows-beta:
@@ -106,3 +117,26 @@ jobs:
             src-tauri/target/release/portable/Recall_0.1.0-beta.1_portable-win64.zip
             src-tauri/target/release/SHA256SUMS.txt
             src-tauri/resources/python-runtime-report.json
+
+      - name: Publish GitHub Release
+        if: ${{ startsWith(github.ref, 'refs/tags/v') || inputs.publish_github_release }}
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ startsWith(github.ref, 'refs/tags/') && github.ref_name || 'v0.1.0-beta.1' }}
+          name: Recall 0.1.0 Beta
+          draft: true
+          prerelease: true
+          generate_release_notes: true
+          files: |
+            src-tauri/target/release/recall.exe
+            src-tauri/target/release/portable/Recall_0.1.0-beta.1_portable-win64.zip
+            src-tauri/target/release/SHA256SUMS.txt
+            src-tauri/resources/python-runtime-report.json
+          body: |
+            ## Recall 0.1.0 Beta
+
+            This is a GitHub-first Windows testing release.
+
+            Download the portable zip if you want to run Recall without cloning the developer workspace. Keep `recall.exe` and the bundled `python` folder together.
+
+            Windows may show an unknown publisher warning because artifacts are unsigned in this beta release.
