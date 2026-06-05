@@ -22,7 +22,10 @@ class EmbeddingEnginePathTests(unittest.TestCase):
             checkpoint.write_bytes(b"checkpoint")
 
             with patch.dict(os.environ, {"RECALL_MODEL_ROOT": str(model_root)}, clear=False):
-                self.assertEqual(engine.resolve_openclip_checkpoint("open_clip_model.safetensors"), checkpoint)
+                self.assertEqual(
+                    engine.resolve_openclip_checkpoint("open_clip_model.safetensors").resolve(),
+                    checkpoint.resolve(),
+                )
 
     def test_resolve_bge_model_dir_uses_local_model_root(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -32,7 +35,7 @@ class EmbeddingEnginePathTests(unittest.TestCase):
             (model_dir / "config.json").write_text("{}", encoding="utf-8")
 
             with patch.dict(os.environ, {"RECALL_MODEL_ROOT": str(model_root)}, clear=False):
-                self.assertEqual(engine.resolve_bge_model_dir(), model_dir)
+                self.assertEqual(engine.resolve_bge_model_dir().resolve(), model_dir.resolve())
 
     def test_missing_local_models_raise_actionable_error(self) -> None:
         missing_root = Path(tempfile.gettempdir()) / "missing-recall-model-root"
