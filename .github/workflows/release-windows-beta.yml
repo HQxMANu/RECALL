@@ -135,6 +135,7 @@ jobs:
           draft: true
           prerelease: true
           generate_release_notes: true
+          overwrite_files: true
           files: |
             src-tauri/target/release/recall.exe
             src-tauri/target/release/portable/Recall_0.1.0-beta.1_portable-win64.zip
