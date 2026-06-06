@@ -36,11 +36,13 @@ jobs:
       - name: Install frontend dependencies
         run: npm ci
 
-      - name: Install worker test dependencies
+      - name: Create worker test virtualenv
         working-directory: python
+        shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          python -m pip install .
+          python -m venv .venv
+          .venv\Scripts\python.exe -m pip install --upgrade pip
+          .venv\Scripts\python.exe -m pip install ".[ml]"
 
       - name: Lint frontend
         run: npm run lint
@@ -48,8 +50,17 @@ jobs:
       - name: Build frontend
         run: npm run build
 
+      - name: Prepare bundled worker runtime
+        shell: pwsh
+        run: |
+          $env:Path = "$(Resolve-Path python\.venv\Scripts);$env:Path"
+          npm run build:runtime
+
       - name: Check Rust host
         run: cargo check --manifest-path src-tauri/Cargo.toml
 
       - name: Run Python tests
-        run: npm run test:python
+        shell: pwsh
+        run: |
+          $env:Path = "$(Resolve-Path python\.venv\Scripts);$env:Path"
+          npm run test:python
