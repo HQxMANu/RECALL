@@ -50,11 +50,11 @@ jobs:
       - name: Build frontend
         run: npm run build
 
-      - name: Prepare bundled worker runtime
+      - name: Prepare Tauri resource placeholder
         shell: pwsh
         run: |
-          $env:Path = "$(Resolve-Path python\.venv\Scripts);$env:Path"
-          npm run build:runtime
+          New-Item -ItemType Directory -Force -Path src-tauri\resources\python | Out-Null
+          Set-Content -Path src-tauri\resources\python\run_worker.py -Value "# CI cargo-check placeholder" -Encoding utf8
 
       - name: Check Rust host
         run: cargo check --manifest-path src-tauri/Cargo.toml

@@ -45,6 +45,14 @@ jobs:
       - name: Cache Rust build output
         uses: Swatinem/rust-cache@v2
 
+      - name: Cache Recall model assets
+        uses: actions/cache@v4
+        with:
+          path: python/models
+          key: recall-core-models-v1-${{ runner.os }}-${{ hashFiles('scripts/prepare_local_models.py') }}
+          restore-keys: |
+            recall-core-models-v1-${{ runner.os }}-
+
       - name: Install frontend dependencies
         run: npm ci
 
@@ -56,12 +64,40 @@ jobs:
           .venv\Scripts\python.exe -m pip install --upgrade pip
           .venv\Scripts\python.exe -m pip install ".[ml]"
 
-      - name: Run GitHub-first validation gates
+      - name: Lint frontend
+        run: npm run lint
+
+      - name: Prepare bundled worker runtime
         shell: pwsh
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
           $env:Path = "$(Resolve-Path python\.venv\Scripts);$env:Path"
           python -c "import sys; print(sys.executable)"
-          npm run validate:release
+          for ($attempt = 1; $attempt -le 4; $attempt++) {
+            npm run build:runtime
+            if ($LASTEXITCODE -eq 0) {
+              exit 0
+            }
+            if ($attempt -eq 4) {
+              exit $LASTEXITCODE
+            }
+            $delaySeconds = [Math]::Min(300, 30 * $attempt * $attempt)
+            Write-Warning "Runtime preparation failed on attempt $attempt. Retrying in $delaySeconds seconds."
+            Start-Sleep -Seconds $delaySeconds
+          }
+
+      - name: Build frontend
+        run: npm run build
+
+      - name: Check Rust host
+        run: cargo check --manifest-path src-tauri/Cargo.toml
+
+      - name: Run Python tests
+        shell: pwsh
+        run: |
+          $env:Path = "$(Resolve-Path python\.venv\Scripts);$env:Path"
+          npm run test:python
 
       - name: Build Windows portable convenience binaries
         env:
@@ -70,7 +106,11 @@ jobs:
         run: |
           $env:Path = "$(Resolve-Path python\.venv\Scripts);$env:Path"
           python -c "import sys; print(sys.executable)"
-          npm run build:tauri
+          npx tauri build --no-bundle --ci --config '{"build":{"beforeBuildCommand":"npm run build"}}'
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          npm run package:portable
 
       - name: Sign optional release artifacts
         if: ${{ inputs.sign_artifacts }}
