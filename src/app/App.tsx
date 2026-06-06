@@ -1,16 +1,18 @@
 import { useState } from 'react'
 
+import { FoldersView } from '../features/folders/FoldersView'
 import { PreviewModal } from '../features/preview/PreviewModal'
 import { SearchView } from '../features/search/SearchView'
 import { useRecallApp } from '../hooks/useRecallApp'
-import { LeftNavRail } from './LeftNavRail'
+import { LeftNavRail, type AppView } from './LeftNavRail'
 import { StatusPanel } from './StatusPanel'
 import { TopHeader, type SearchScope } from './TopHeader'
 
 export type ThumbnailSize = 'large' | 'medium' | 'small'
 
 export function RecallApp() {
-  const scope: SearchScope = 'images'
+  const [view, setView] = useState<AppView>('search')
+  const [scope, setScope] = useState<SearchScope>('images')
   const [thumbnailSize, setThumbnailSize] = useState<ThumbnailSize>('large')
   const app = useRecallApp(scope)
   const isModalOpen = Boolean(app.selectedResult)
@@ -23,33 +25,47 @@ export function RecallApp() {
     <>
       <div className="app-shell" data-modal-open={isModalOpen}>
         <div className="app-frame">
-          <LeftNavRail />
+          <LeftNavRail activeView={view} onViewChange={setView} />
 
           <TopHeader
             query={app.query}
+            scope={scope}
             disabled={!app.coreSearchReady}
             helperText={app.searchDisabledReason}
             onQueryChange={handleQueryChange}
+            onScopeChange={setScope}
             health={app.health}
             status={app.status}
           />
 
           <main className="workspace" aria-live="polite">
-            <SearchView
-              coreSearchReady={app.coreSearchReady}
-              isSearching={app.isSearching || app.isBootstrapping}
-              showLoadingSkeleton={app.showSearchSkeleton}
-              query={app.query}
-              results={app.results}
-              errorMessage={app.errorMessage}
-              statusMessage={app.searchDisabledReason}
-              thumbnailSize={thumbnailSize}
-              hasMoreResults={app.hasMoreResults}
-              isLoadingMore={app.isLoadingMore}
-              onThumbnailSizeChange={setThumbnailSize}
-              onPreview={app.previewResult}
-              onLoadMore={app.loadMoreResults}
-            />
+            {view === 'folders' ? (
+              <FoldersView
+                folders={app.folders}
+                activeFolderIds={app.activeFolderSet}
+                onAddFolders={app.addFolders}
+                onRebuildAll={app.rebuildAll}
+                onRebuildFolder={app.rebuildFolder}
+                onRemoveFolder={app.removeFolder}
+                onToggleFolder={app.toggleFolder}
+              />
+            ) : (
+              <SearchView
+                coreSearchReady={app.coreSearchReady}
+                isSearching={app.isSearching || app.isBootstrapping}
+                showLoadingSkeleton={app.showSearchSkeleton}
+                query={app.query}
+                results={app.results}
+                errorMessage={app.errorMessage}
+                statusMessage={app.searchDisabledReason}
+                thumbnailSize={thumbnailSize}
+                hasMoreResults={app.hasMoreResults}
+                isLoadingMore={app.isLoadingMore}
+                onThumbnailSizeChange={setThumbnailSize}
+                onPreview={app.previewResult}
+                onLoadMore={app.loadMoreResults}
+              />
+            )}
           </main>
 
           <StatusPanel
