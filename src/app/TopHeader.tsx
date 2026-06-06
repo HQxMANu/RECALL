@@ -6,32 +6,33 @@ export type SearchScope = 'images' | 'voice-notes' | 'documents'
 
 type TopHeaderProps = {
   query: string
-  scope: SearchScope
   disabled: boolean
   helperText: string
+  scope: SearchScope
   onQueryChange: (value: string) => void
-  onScopeChange: (scope: SearchScope) => void
+  onScopeChange: (value: SearchScope) => void
   health: AppHealth
   status: IndexingStatus
 }
 
 const scopeOptions: Array<{ value: SearchScope; label: string }> = [
   { value: 'images', label: 'Images' },
-  { value: 'documents', label: 'Documents' },
   { value: 'voice-notes', label: 'Voice rec' },
+  { value: 'documents', label: 'Documents' },
 ]
 
 export function TopHeader({
   query,
-  scope,
   disabled,
   helperText,
+  scope,
   onQueryChange,
   onScopeChange,
   health,
   status,
 }: TopHeaderProps) {
-  const selectedScope = scopeOptions.find((option) => option.value === scope) ?? scopeOptions[0]
+  const activeScopeLabel =
+    scopeOptions.find((option) => option.value === scope)?.label ?? 'Images'
 
   return (
     <header className="top-header">
@@ -40,6 +41,7 @@ export function TopHeader({
           query={query}
           disabled={disabled}
           helperText={disabled ? helperText : ''}
+          scope={scope}
           showSuggestions={false}
           onQueryChange={onQueryChange}
         />
@@ -47,33 +49,35 @@ export function TopHeader({
 
       <div className="top-header__controls">
         <div className="scope-menu">
-          <button type="button" className="scope-menu__trigger" aria-haspopup="menu">
-            <span>{selectedScope.label}</span>
+          <div className="scope-menu__trigger" aria-hidden="true">
+            <span>{activeScopeLabel}</span>
             <span className="scope-menu__caret" aria-hidden="true">
-              v
+              ▾
             </span>
-          </button>
-          <div className="scope-menu__panel" role="menu">
+          </div>
+
+          <div className="scope-menu__panel" role="menu" aria-label="Search content type">
             {scopeOptions.map((option) => (
               <button
                 key={option.value}
                 type="button"
-                className="scope-menu__item"
-                data-active={scope === option.value}
                 role="menuitemradio"
                 aria-checked={scope === option.value}
+                className="scope-menu__item"
+                data-active={scope === option.value}
                 onClick={() => onScopeChange(option.value)}
               >
                 <span>{option.label}</span>
                 {scope === option.value ? (
                   <span className="scope-menu__check" aria-hidden="true">
-                    on
+                    •
                   </span>
                 ) : null}
               </button>
             ))}
           </div>
         </div>
+
         <StatusPill health={health} status={status} scope={scope} />
       </div>
     </header>

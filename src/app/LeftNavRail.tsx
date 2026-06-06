@@ -1,66 +1,73 @@
+import type { ReactNode } from 'react'
 import recallLogo from '../assets/recall-logo.png'
 
-export type AppView = 'search' | 'folders'
+export type WorkspaceView = 'search' | 'folders'
 
 type LeftNavRailProps = {
-  activeView: AppView
-  onViewChange: (view: AppView) => void
+  activeView: WorkspaceView
+  onChangeView: (view: WorkspaceView) => void
 }
 
-export function LeftNavRail({ activeView, onViewChange }: LeftNavRailProps) {
+type NavItem = {
+  id: WorkspaceView
+  label: string
+  icon: ReactNode
+}
+
+const NAV_ITEMS: NavItem[] = [
+  {
+    id: 'search',
+    label: 'Search',
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M10.5 4.5a6 6 0 1 0 0 12a6 6 0 0 0 0-12Zm0-2a8 8 0 1 1 4.97 14.27l4.13 4.13l-1.41 1.41l-4.13-4.13A8 8 0 0 1 10.5 2.5Z"
+          fill="currentColor"
+        />
+      </svg>
+    ),
+  },
+  {
+    id: 'folders',
+    label: 'Indexed folders',
+    icon: (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M3 6.5A2.5 2.5 0 0 1 5.5 4h4.2l1.5 1.7h7.3A2.5 2.5 0 0 1 21 8.2v9.3A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5v-11ZM5.5 6A.5.5 0 0 0 5 6.5v1h14v-.3a.5.5 0 0 0-.5-.5h-8.2L8.8 5H5.5Zm13 3.5H5v8a.5.5 0 0 0 .5.5h13a.5.5 0 0 0 .5-.5v-8Z"
+          fill="currentColor"
+        />
+      </svg>
+    ),
+  },
+]
+
+export function LeftNavRail({ activeView, onChangeView }: LeftNavRailProps) {
   return (
-    <aside className="nav-rail" aria-label="Recall">
+    <aside className="nav-rail" aria-label="Primary navigation">
       <div className="nav-rail__brand" aria-hidden="true">
         <img className="nav-rail__brand-logo" src={recallLogo} alt="" />
       </div>
 
-      <nav className="nav-rail__nav" aria-label="Primary">
-        <button
-          type="button"
-          className="nav-rail__button"
-          data-active={activeView === 'search'}
-          aria-pressed={activeView === 'search'}
-          title="Search"
-          onClick={() => onViewChange('search')}
-        >
-          <SearchIcon />
-          <span>Search</span>
-        </button>
-        <button
-          type="button"
-          className="nav-rail__button"
-          data-active={activeView === 'folders'}
-          aria-pressed={activeView === 'folders'}
-          title="Folders"
-          onClick={() => onViewChange('folders')}
-        >
-          <FolderIcon />
-          <span>Folders</span>
-        </button>
+      <nav className="nav-rail__nav">
+        {NAV_ITEMS.map((item) => {
+          const isActive = item.id === activeView
+          return (
+            <button
+              key={item.id}
+              type="button"
+              className="nav-rail__button"
+              data-active={isActive}
+              aria-current={isActive ? 'page' : undefined}
+              aria-label={item.label}
+              title={item.label}
+              onClick={() => onChangeView(item.id)}
+            >
+              {item.icon}
+              <span>{item.label}</span>
+            </button>
+          )
+        })}
       </nav>
     </aside>
-  )
-}
-
-function SearchIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <circle cx="11" cy="11" r="6" fill="none" stroke="currentColor" strokeWidth="2" />
-      <path d="m16 16 4 4" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
-    </svg>
-  )
-}
-
-function FolderIcon() {
-  return (
-    <svg viewBox="0 0 24 24" aria-hidden="true">
-      <path
-        d="M4 6.5h6l1.6 2H20v9a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinejoin="round"
-      />
-    </svg>
   )
 }

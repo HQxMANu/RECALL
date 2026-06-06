@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.1.0-beta.3
+
+- restored the original folder navigation and image/document/voice-rec scope controls from the pre-cleanup developer UI
+- kept portable app data isolation and packaged runtime fixes from beta 2
+
 ## 0.1.0-beta.2
 
 - restored the folder management view and image/document/voice-rec scope selector in packaged builds

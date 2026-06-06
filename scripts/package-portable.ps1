@@ -6,7 +6,7 @@ $portableRoot = Join-Path $releaseRoot "portable"
 $appRoot = Join-Path $portableRoot "Recall"
 $pythonSource = Join-Path $projectRoot "src-tauri\resources\python"
 $exeSource = Join-Path $releaseRoot "recall.exe"
-$zipPath = Join-Path $portableRoot "Recall_0.1.0-beta.2_portable-win64.zip"
+$zipPath = Join-Path $portableRoot "Recall_0.1.0-beta.3_portable-win64.zip"
 $readmePath = Join-Path $appRoot "README-portable.txt"
 
 if (-not (Test-Path $exeSource)) {

@@ -4,20 +4,21 @@ import { FoldersView } from '../features/folders/FoldersView'
 import { PreviewModal } from '../features/preview/PreviewModal'
 import { SearchView } from '../features/search/SearchView'
 import { useRecallApp } from '../hooks/useRecallApp'
-import { LeftNavRail, type AppView } from './LeftNavRail'
+import { LeftNavRail, type WorkspaceView } from './LeftNavRail'
 import { StatusPanel } from './StatusPanel'
 import { TopHeader, type SearchScope } from './TopHeader'
 
 export type ThumbnailSize = 'large' | 'medium' | 'small'
 
 export function RecallApp() {
-  const [view, setView] = useState<AppView>('search')
+  const [view, setView] = useState<WorkspaceView>('search')
   const [scope, setScope] = useState<SearchScope>('images')
   const [thumbnailSize, setThumbnailSize] = useState<ThumbnailSize>('large')
   const app = useRecallApp(scope)
   const isModalOpen = Boolean(app.selectedResult)
 
   const handleQueryChange = (value: string) => {
+    setView('search')
     app.setQuery(value)
   }
 
@@ -25,7 +26,7 @@ export function RecallApp() {
     <>
       <div className="app-shell" data-modal-open={isModalOpen}>
         <div className="app-frame">
-          <LeftNavRail activeView={view} onViewChange={setView} />
+          <LeftNavRail activeView={view} onChangeView={setView} />
 
           <TopHeader
             query={app.query}
@@ -39,17 +40,7 @@ export function RecallApp() {
           />
 
           <main className="workspace" aria-live="polite">
-            {view === 'folders' ? (
-              <FoldersView
-                folders={app.folders}
-                activeFolderIds={app.activeFolderSet}
-                onAddFolders={app.addFolders}
-                onRebuildAll={app.rebuildAll}
-                onRebuildFolder={app.rebuildFolder}
-                onRemoveFolder={app.removeFolder}
-                onToggleFolder={app.toggleFolder}
-              />
-            ) : (
+            {view === 'search' ? (
               <SearchView
                 coreSearchReady={app.coreSearchReady}
                 isSearching={app.isSearching || app.isBootstrapping}
@@ -64,6 +55,16 @@ export function RecallApp() {
                 onThumbnailSizeChange={setThumbnailSize}
                 onPreview={app.previewResult}
                 onLoadMore={app.loadMoreResults}
+              />
+            ) : (
+              <FoldersView
+                folders={app.folders}
+                activeFolderIds={app.activeFolderSet}
+                onAddFolders={app.addFolders}
+                onRebuildAll={app.rebuildAll}
+                onRebuildFolder={app.rebuildFolder}
+                onRemoveFolder={app.removeFolder}
+                onToggleFolder={app.toggleFolder}
               />
             )}
           </main>

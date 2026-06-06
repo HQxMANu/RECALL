@@ -71,14 +71,14 @@ This builds a portable Windows package:
 
 - the release executable at `src-tauri\target\release\recall.exe`
 - the portable folder at `src-tauri\target\release\portable\Recall`
-- the portable zip at `src-tauri\target\release\portable\Recall_0.1.0-beta.2_portable-win64.zip`
+- the portable zip at `src-tauri\target\release\portable\Recall_0.1.0-beta.3_portable-win64.zip`
 
 ### Download The Windows App
 
 For normal testers who do **not** want the full developer workspace:
 
 1. open the latest GitHub Release
-2. download `Recall_0.1.0-beta.2_portable-win64.zip`
+2. download `Recall_0.1.0-beta.3_portable-win64.zip`
 3. unzip it
 4. keep `recall.exe` and the bundled `python` folder together
 5. launch `recall.exe`

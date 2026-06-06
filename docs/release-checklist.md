@@ -67,7 +67,7 @@ npm run build:tauri
 
 - `src-tauri\target\release\recall.exe`
 - `src-tauri\target\release\portable\Recall`
-- `src-tauri\target\release\portable\Recall_0.1.0-beta.2_portable-win64.zip`
+- `src-tauri\target\release\portable\Recall_0.1.0-beta.3_portable-win64.zip`
 
 3. Attach checksums and release notes.
 
@@ -76,14 +76,14 @@ npm run build:tauri
 5. Prefer publishing from a version tag:
 
 ```powershell
-git tag v0.1.0-beta.2
-git push origin v0.1.0-beta.2
+git tag v0.1.0-beta.3
+git push origin v0.1.0-beta.3
 ```
 
 The `Build Windows Portable Release Artifacts` workflow creates a draft prerelease with:
 
 - `recall.exe`
-- `Recall_0.1.0-beta.2_portable-win64.zip`
+- `Recall_0.1.0-beta.3_portable-win64.zip`
 - `SHA256SUMS.txt`
 - `python-runtime-report.json`
 
