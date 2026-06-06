@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.1.0-beta.2
+
+- restored the folder management view and image/document/voice-rec scope selector in packaged builds
+- isolated portable app data beside the portable executable instead of reusing developer app data
+- fixed packaged frontend bundling so the desktop app does not try to load localhost
+
 ## 0.1.0-beta.1
 
 - shifted Recall to a GitHub-first open-source distribution posture
