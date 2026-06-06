@@ -103,7 +103,6 @@ jobs:
         shell: pwsh
         run: |
           $artifacts = @(
-            "src-tauri\target\release\recall.exe",
             "src-tauri\target\release\portable\Recall_0.1.0-beta.1_portable-win64.zip"
           )
           $lines = @()
@@ -121,7 +120,6 @@ jobs:
         with:
           name: recall-windows-release-artifacts
           path: |
-            src-tauri/target/release/recall.exe
             src-tauri/target/release/portable/Recall_0.1.0-beta.1_portable-win64.zip
             src-tauri/target/release/SHA256SUMS.txt
             src-tauri/resources/python-runtime-report.json
@@ -137,7 +135,6 @@ jobs:
           generate_release_notes: true
           overwrite_files: true
           files: |
-            src-tauri/target/release/recall.exe
             src-tauri/target/release/portable/Recall_0.1.0-beta.1_portable-win64.zip
             src-tauri/target/release/SHA256SUMS.txt
             src-tauri/resources/python-runtime-report.json

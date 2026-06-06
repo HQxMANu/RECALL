@@ -417,6 +417,17 @@ impl WorkerManager {
 }
 
 fn resolve_app_data_dir(app: &AppHandle) -> anyhow::Result<PathBuf> {
+    if let Some(executable_dir) = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(PathBuf::from))
+    {
+        let portable_runtime = executable_dir.join("python").join("run_worker.py");
+        let portable_readme = executable_dir.join("README-portable.txt");
+        if portable_runtime.exists() && portable_readme.exists() {
+            return Ok(executable_dir.join(".recall-data"));
+        }
+    }
+
     app.path()
         .app_data_dir()
         .context("Unable to resolve the app data directory")

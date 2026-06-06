@@ -288,6 +288,17 @@ fn resolve_dev_worker_root() -> anyhow::Result<Option<PathBuf>> {
         }
     }
 
+    if !cfg!(debug_assertions) && std::env::var("RECALL_DEV_WORKER_ROOT").is_err() {
+        return Ok(None);
+    }
+
+    if let Ok(configured) = std::env::var("RECALL_DEV_WORKER_ROOT") {
+        let configured_path = PathBuf::from(configured);
+        if configured_path.join("python").join("run_worker.py").exists() {
+            return Ok(Some(configured_path));
+        }
+    }
+
     let current = std::env::current_dir().context("Unable to locate current project directory")?;
     if current
         .file_name()

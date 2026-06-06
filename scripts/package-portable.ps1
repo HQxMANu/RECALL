@@ -39,6 +39,7 @@ This is a GitHub-first portable build of Recall.
 - The executable is unsigned in the current release posture.
 - Windows may show an unknown publisher warning.
 - Core search expects the bundled python runtime and local models that ship in the adjacent python folder.
+- Portable app data is stored in the adjacent .recall-data folder after first launch.
 
 To run:
 1. Keep recall.exe and the python folder together.
